@@ -1,0 +1,18 @@
+/* ═══════════════════════════════════════════════════════════
+   MAIN.CSS — point d'entrée, importe les partiels
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  --bg: #0a0a0a;
+  --fg: #ffffff;
+}
+
+.theme-light {
+  --bg: #ffffff;
+  --fg: #0a0a0a;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
