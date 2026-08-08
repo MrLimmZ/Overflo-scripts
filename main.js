@@ -1013,6 +1013,7 @@
   }
 
   // src/what-steps-crossfade.js
+  var FADE_DURATION = 0.4;
   function initWhatStepsCrossfade(root = document) {
     if (typeof ScrollTrigger === "undefined") return;
     const section = root.querySelector(".what");
@@ -1032,9 +1033,21 @@
     if (!total) return;
     let st = null;
     let currentActiveIndex = -1;
+    let queueTarget = 0;
+    let activeTimeline = null;
+    let reduced = prefersReducedMotion();
+    onMotionPreferenceChange((value) => {
+      reduced = value;
+    });
     function applyStaticState() {
+      if (activeTimeline) {
+        activeTimeline.kill();
+        activeTimeline = null;
+      }
       banners.forEach((banner, index) => {
+        gsap.killTweensOf(banner);
         banner.style.display = index === total - 1 ? "block" : "none";
+        gsap.set(banner, { opacity: 1 });
       });
       textGroups.forEach((group, index) => {
         group.style.display = index === total - 1 ? "block" : "none";
@@ -1042,10 +1055,85 @@
       progressBars.forEach((bar) => {
         bar.style.height = "100%";
       });
+      currentActiveIndex = total - 1;
+      queueTarget = total - 1;
+    }
+    function setTextInstant(activeIndex) {
+      textGroups.forEach((group, index) => {
+        group.style.display = index === activeIndex ? "block" : "none";
+      });
+    }
+    function setBannersInstant(activeIndex) {
+      banners.forEach((banner, index) => {
+        gsap.killTweensOf(banner);
+        banner.style.display = index === activeIndex ? "block" : "none";
+        gsap.set(banner, { opacity: 1 });
+      });
+    }
+    function buildCrossfadeTimeline(activeIndex) {
+      const tl = gsap.timeline({
+        onComplete: () => {
+          activeTimeline = null;
+          if (queueTarget !== currentActiveIndex) {
+            const dir = queueTarget > currentActiveIndex ? 1 : -1;
+            stepToward(currentActiveIndex + dir);
+          }
+        }
+      });
+      banners.forEach((banner, index) => {
+        const isActive = index === activeIndex;
+        if (isActive) {
+          tl.set(banner, { display: "block" }, 0);
+          tl.fromTo(
+            banner,
+            { opacity: 0 },
+            { opacity: 1, duration: FADE_DURATION, ease: "power1.out" },
+            0
+          );
+        } else if (banner.style.display !== "none" || gsap.getProperty(banner, "opacity") > 0) {
+          tl.to(banner, { opacity: 0, duration: FADE_DURATION, ease: "power1.out" }, 0);
+          tl.set(banner, { display: "none" }, FADE_DURATION);
+        }
+      });
+      return tl;
+    }
+    function stepToward(nextIndex) {
+      if (activeTimeline) {
+        activeTimeline.kill();
+        activeTimeline = null;
+      }
+      currentActiveIndex = nextIndex;
+      setTextInstant(nextIndex);
+      activeTimeline = buildCrossfadeTimeline(nextIndex);
+    }
+    function updateStep(progress, immediate = false) {
+      const rawStep = progress * total;
+      const targetIndex = Math.min(total - 1, Math.floor(rawStep));
+      const localProgress = rawStep - targetIndex;
+      queueTarget = targetIndex;
+      if (immediate) {
+        currentActiveIndex = targetIndex;
+        setTextInstant(targetIndex);
+        setBannersInstant(targetIndex);
+      } else if (!activeTimeline && targetIndex !== currentActiveIndex) {
+        const dir = targetIndex > currentActiveIndex ? 1 : -1;
+        stepToward(currentActiveIndex + dir);
+      }
+      progressBars.forEach((bar, index) => {
+        let barProgress = 0;
+        if (index < targetIndex) {
+          barProgress = 1;
+        } else if (index === targetIndex) {
+          barProgress = localProgress;
+        }
+        bar.style.height = `${barProgress * 100}%`;
+      });
     }
     function createScrollAnimation() {
       currentActiveIndex = -1;
-      return ScrollTrigger.create({
+      queueTarget = 0;
+      activeTimeline = null;
+      const trigger = ScrollTrigger.create({
         id: "what-steps-crossfade",
         trigger: section,
         start: "top top+=1",
@@ -1056,33 +1144,13 @@
         scrub: 0.5,
         anticipatePin: 1,
         invalidateOnRefresh: true,
-        onUpdate: (self) => {
-          const progress = self.progress;
-          const rawStep = progress * total;
-          const activeIndex = Math.min(total - 1, Math.floor(rawStep));
-          const localProgress = rawStep - activeIndex;
-          if (activeIndex !== currentActiveIndex) {
-            currentActiveIndex = activeIndex;
-            banners.forEach((banner, index) => {
-              banner.style.display = index === activeIndex ? "block" : "none";
-            });
-            textGroups.forEach((group, index) => {
-              group.style.display = index === activeIndex ? "block" : "none";
-            });
-          }
-          progressBars.forEach((bar, index) => {
-            let barProgress = 0;
-            if (index < activeIndex) {
-              barProgress = 1;
-            } else if (index === activeIndex) {
-              barProgress = localProgress;
-            }
-            bar.style.height = `${barProgress * 100}%`;
-          });
-        }
+        onUpdate: (self) => updateStep(self.progress)
       });
+      updateStep(trigger.progress, true);
+      return trigger;
     }
-    function setup(reduced) {
+    function setup(value) {
+      reduced = value;
       if (st) {
         st.kill();
         st = null;
@@ -1547,6 +1615,194 @@
     return st;
   }
 
+  // src/decorative-videos.js
+  var controllers = /* @__PURE__ */ new Map();
+  var videosById = /* @__PURE__ */ new Map();
+  var autoIdCounter = 0;
+  function readBoolAttr(el, ...names) {
+    for (const name of names) {
+      const value = el.dataset[name];
+      if (value !== void 0) return value !== "false";
+    }
+    return true;
+  }
+  function readNumberAttr(el, name, fallback) {
+    const value = el.dataset[name];
+    if (value === void 0) return fallback;
+    const num = parseFloat(value);
+    return Number.isNaN(num) ? fallback : num;
+  }
+  function createController(video, config) {
+    let delayTimer = null;
+    let hasPlayedIntro = false;
+    let isLooping = false;
+    function clearDelay() {
+      if (delayTimer) {
+        clearTimeout(delayTimer);
+        delayTimer = null;
+      }
+    }
+    function onTimeUpdate() {
+      var _a;
+      if (isLooping && config.loopEnd != null && video.currentTime >= config.loopEnd) {
+        video.currentTime = (_a = config.loopStart) != null ? _a : 0;
+      }
+    }
+    function onEnded() {
+      var _a;
+      if (config.loopStart != null || config.loopEnd != null) {
+        hasPlayedIntro = true;
+        isLooping = true;
+        video.currentTime = (_a = config.loopStart) != null ? _a : 0;
+        video.play().catch(() => {
+        });
+      }
+    }
+    video.addEventListener("timeupdate", onTimeUpdate);
+    video.addEventListener("ended", onEnded);
+    return {
+      trigger() {
+        clearDelay();
+        const start = () => {
+          if (config.replay || !hasPlayedIntro) {
+            isLooping = false;
+            video.currentTime = 0;
+          }
+          video.play().catch(() => {
+          });
+        };
+        if (config.delay > 0) {
+          delayTimer = setTimeout(start, config.delay);
+        } else {
+          start();
+        }
+      },
+      reset() {
+        clearDelay();
+        isLooping = false;
+        hasPlayedIntro = false;
+        video.pause();
+        video.currentTime = 0;
+      },
+      close() {
+        clearDelay();
+        video.pause();
+      },
+      play() {
+        video.play().catch(() => {
+        });
+      },
+      pause() {
+        video.pause();
+      },
+      toggle() {
+        if (video.paused) {
+          video.play().catch(() => {
+          });
+        } else {
+          video.pause();
+        }
+      },
+      isPlaying() {
+        return !video.paused && !video.ended;
+      }
+    };
+  }
+  function initDecorativeVideos(root = document) {
+    const images = Array.from(root.querySelectorAll("img[data-video-source]"));
+    controllers.clear();
+    videosById.clear();
+    if (!images.length) return;
+    if (prefersReducedMotion()) return;
+    const visibilityObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const video = entry.target;
+          if (video.dataset.videoTrigger !== "visible") return;
+          if (video.dataset.videoLazy === "false") return;
+          if (entry.isIntersecting) {
+            video.play().catch(() => {
+            });
+          } else {
+            video.pause();
+          }
+        });
+      },
+      { threshold: 0.1 }
+    );
+    images.forEach((img) => swapToVideo(img, visibilityObserver));
+  }
+  function swapToVideo(img, visibilityObserver) {
+    const src = img.dataset.videoSource;
+    if (!src) return;
+    const trigger = img.dataset.videoTrigger === "manual" ? "manual" : "visible";
+    const autoplay = readBoolAttr(img, "videoAutoplay");
+    const nativeLoop = readBoolAttr(img, "videoLoop", "videoInfinite");
+    const lazy = readBoolAttr(img, "videoLazy");
+    const delay = readNumberAttr(img, "videoDelay", 0);
+    const loopStart = img.dataset.videoLoopStart !== void 0 ? parseFloat(img.dataset.videoLoopStart) : null;
+    const loopEnd = img.dataset.videoLoopEnd !== void 0 ? parseFloat(img.dataset.videoLoopEnd) : null;
+    const replay = readBoolAttr(img, "videoReplay");
+    const id = img.dataset.videoId || `video-${++autoIdCounter}`;
+    const video = document.createElement("video");
+    video.src = src;
+    video.poster = img.currentSrc || img.src;
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute("aria-hidden", "true");
+    video.dataset.videoTrigger = trigger;
+    video.dataset.videoLazy = String(lazy);
+    video.loop = nativeLoop && loopStart == null && loopEnd == null;
+    video.className = img.className;
+    video.style.cssText = img.style.cssText;
+    Object.entries(img.dataset).forEach(([key, value]) => {
+      if (key.startsWith("video")) return;
+      video.dataset[key] = value;
+    });
+    video.addEventListener("error", () => {
+      controllers.delete(id);
+      videosById.delete(id);
+      if (trigger === "visible") visibilityObserver.unobserve(video);
+      video.replaceWith(img);
+    });
+    img.replaceWith(video);
+    const controller = createController(video, { delay, loopStart, loopEnd, replay });
+    controllers.set(id, controller);
+    videosById.set(id, video);
+    if (trigger === "visible") {
+      visibilityObserver.observe(video);
+      if (autoplay) {
+        video.addEventListener(
+          "canplay",
+          () => {
+            video.play().catch(() => {
+            });
+          },
+          { once: true }
+        );
+      }
+    }
+  }
+  function initVideoControls(root = document) {
+    const buttons = Array.from(root.querySelectorAll("[data-video-control]"));
+    buttons.forEach((btn) => {
+      const id = btn.dataset.videoControl;
+      const action = btn.dataset.videoAction || "toggle";
+      const video = videosById.get(id);
+      const controller = controllers.get(id);
+      if (!video || !controller) return;
+      btn.addEventListener("click", (e) => {
+        var _a;
+        e.preventDefault();
+        (_a = controller[action]) == null ? void 0 : _a.call(controller);
+      });
+      const sync = () => btn.classList.toggle("is-playing", controller.isPlaying());
+      video.addEventListener("play", sync);
+      video.addEventListener("pause", sync);
+      sync();
+    });
+  }
+
   // src/barba.js
   function assignPinPriorities(triggers) {
     const valid = triggers.filter((st) => st && st.trigger);
@@ -1566,6 +1822,8 @@
     if (typeof ScrollTrigger !== "undefined") {
       ScrollTrigger.getAll().forEach((st) => st.kill());
     }
+    initDecorativeVideos(root);
+    initVideoControls(root);
     initCollapseEnhance(root);
     initTableEnhance(root);
     initStepsEnhance(root);
@@ -1603,7 +1861,9 @@
     (_a = window.lenis) == null ? void 0 : _a.resize();
   }
   function scrollToFilteredSectionIfNeeded(root) {
-    const hasCategoryParam = new URLSearchParams(window.location.search).has("category");
+    const hasCategoryParam = new URLSearchParams(window.location.search).has(
+      "category"
+    );
     if (!hasCategoryParam) return;
     const section = root.querySelector(".blog-list");
     if (!section) return;
