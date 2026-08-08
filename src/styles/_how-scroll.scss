@@ -1,0 +1,19 @@
+.how {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.how-track {
+  display: flex;
+  flex-flow: row;
+  align-items: center;
+  width: max-content;
+  min-width: max-content;
+  flex-shrink: 0;
+  will-change: transform;
+}
+
+.how-list {
+  flex-shrink: 0;
+}

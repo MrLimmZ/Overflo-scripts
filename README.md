@@ -41,7 +41,14 @@ npm run dev
 ```
 → sert `main.js` et `main.css` sur `http://localhost:3000` avec les headers
 CORS déjà configurés (indispensable pour que Webflow puisse fetch depuis un
-autre domaine). Rebuild automatique à chaque sauvegarde dans `src/`.
+autre domaine). **Live reload automatique** : à chaque sauvegarde dans
+`src/`, esbuild rebuild et la page Webflow (dev ou staging) se recharge
+toute seule — plus besoin de reload à la main.
+
+Le live reload fonctionne via l'endpoint `/esbuild` d'esbuild (Server-Sent
+Events). Le script dans `webflow-head-code.html` s'y connecte automatiquement
+dès qu'il détecte qu'il tourne en dev/staging, et ne fait jamais rien en
+prod (aucune connexion vers jsDelivr).
 
 ## 2. Staging (test sur `.webflow.io`)
 

@@ -1,0 +1,15 @@
+// ═══════════════════════════════════════════════════════════
+// MAIN.SCSS — point d'entrée, importe les partiels
+// ═══════════════════════════════════════════════════════════
+
+@use "base";
+@use "nav";
+@use "blog";
+@use "article";
+@use "pricing";
+@use "large-quote";
+@use "why-converge";
+@use "how-scroll";
+@use "slider-testimonials";
+@use "duo-slider";
+@use "zoom-reveal";

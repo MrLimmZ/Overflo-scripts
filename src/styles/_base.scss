@@ -1,0 +1,8 @@
+.button.is-hover {
+  color: var(--_colors---text--text-primary);
+}
+
+.icon-button.is-disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}

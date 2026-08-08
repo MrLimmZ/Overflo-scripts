@@ -1,0 +1,53 @@
+.duo-slider-list {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.duo-slider-decor {
+  position: absolute;
+  left: 50%;
+  border-radius: var(--_border-radius---radius-lg);
+  pointer-events: none;
+  transform-origin: top center;
+
+  &[data-depth="1"] {
+    background-color: #f4f4f4;
+    z-index: 1;
+  }
+
+  &[data-depth="2"] {
+    background-color: #ededed;
+    z-index: 0;
+  }
+}
+
+.duo-slider-item {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  will-change: opacity;
+
+  &.is-active {
+    z-index: 3;
+    pointer-events: auto;
+  }
+}
+
+.duo-slider-dots {
+  position: relative;
+  height: 8px;
+  width: 44px;
+  overflow: hidden;
+}
+
+.duo-slider-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  cursor: pointer;
+  will-change: transform, opacity;
+}

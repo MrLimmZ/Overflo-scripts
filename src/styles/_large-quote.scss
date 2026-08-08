@@ -1,0 +1,32 @@
+.large-quote {
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+.large-quote-line-wrap {
+  position: relative;
+}
+
+.large-quote-text-base {
+  opacity: 0.35;
+}
+
+.large-quote-text-reveal {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  opacity: 1;
+  mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black var(--reveal, 0%),
+    transparent var(--reveal, 0%)
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black var(--reveal, 0%),
+    transparent var(--reveal, 0%)
+  );
+}

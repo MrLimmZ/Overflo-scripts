@@ -1,0 +1,47 @@
+.blog-card-description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.blog-list-empty {
+  display: none;
+
+  &.is-visible {
+    display: flex;
+  }
+}
+
+.blog-list-header-form > div:has(input[name="cf-turnstile-response"]) {
+  display: none;
+}
+
+.social-proof-slider--wrapper {
+  overflow: hidden;
+}
+
+.logo-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: logo-marquee 25s linear infinite;
+  gap: 24px;
+}
+
+.social-proof-slider {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2rem;
+}
+
+.social-proof-logo {
+  flex-shrink: 0;
+}
+
+@keyframes logo-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--marquee-distance, 100%)));
+  }
+}

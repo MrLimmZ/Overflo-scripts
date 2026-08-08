@@ -1,6 +1,4 @@
-// ═══════════════════════════════════════════════════════════
-// CORE — initialisations globales (smooth scroll, helpers)
-// ═══════════════════════════════════════════════════════════
+// src/core.js
 
 function initLenis() {
   if (typeof Lenis === "undefined") return;
@@ -8,17 +6,52 @@ function initLenis() {
   const lenis = new Lenis({
     duration: 1.2,
     smoothWheel: true,
+    touchMultiplier: 2,
   });
 
-  function raf(time) {
-    lenis.raf(time);
+  window.lenis = lenis;
+
+  if ("ResizeObserver" in window) {
+    let raf;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        lenis.resize();
+        if (typeof ScrollTrigger !== "undefined") {
+          ScrollTrigger.refresh();
+        }
+      });
+    });
+    ro.observe(document.documentElement);
+  }
+
+  if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
+    gsap.registerPlugin(ScrollTrigger);
+
+    lenis.on("scroll", ScrollTrigger.update);
+
+    gsap.ticker.add((time) => {
+      lenis.raf(time * 1000);
+    });
+    gsap.ticker.lagSmoothing(0);
+  } else {
+    function raf(time) {
+      lenis.raf(time);
+      requestAnimationFrame(raf);
+    }
     requestAnimationFrame(raf);
   }
-  requestAnimationFrame(raf);
 
-  window.lenis = lenis;
+  // Recalage global une fois toute la page chargée (images, fonts, etc.)
+  window.addEventListener("load", () => {
+    lenis.resize();
+    if (typeof ScrollTrigger !== "undefined") {
+      ScrollTrigger.refresh();
+    }
+  });
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+window.Webflow ||= [];
+window.Webflow.push(() => {
   initLenis();
 });

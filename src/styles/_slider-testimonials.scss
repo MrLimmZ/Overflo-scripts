@@ -1,0 +1,43 @@
+.slider-box {
+  position: relative;
+  overflow: hidden;
+  perspective: 1400px;
+}
+
+.slider-box-list {
+  position: relative;
+  height: 392px;
+  transform-style: preserve-3d;
+}
+
+.slider-box-item {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  cursor: pointer;
+  box-shadow: none;
+  will-change: transform, opacity;
+
+  &.is-active {
+    cursor: default;
+
+    .rating-card {
+      box-shadow: 0 20px 60px rgba(62, 36, 23, 0.25);
+    }
+  }
+}
+
+.slider-dots {
+  position: relative;
+  height: 8px;
+  width: 44px;
+  overflow: hidden;
+}
+
+.slider-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  cursor: pointer;
+  will-change: transform, opacity;
+}

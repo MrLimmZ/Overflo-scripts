@@ -1,14 +1,6 @@
-// ═══════════════════════════════════════════════════════════
-// NAV — exemple de module (à adapter / dupliquer pour tes besoins)
-// ═══════════════════════════════════════════════════════════
+// src/nav.js
 
-function initNav() {
-  const nav = document.querySelector(".nav");
+export function initNav(root = document) {
+  const nav = root.querySelector(".nav");
   if (!nav) return;
-
-  // Ton code ici
 }
-
-document.addEventListener("DOMContentLoaded", () => {
-  initNav();
-});

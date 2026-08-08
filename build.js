@@ -1,53 +1,47 @@
 const esbuild = require("esbuild");
+const { sassPlugin } = require("esbuild-sass-plugin");
 
 const isWatch = process.argv.includes("--watch");
 const isServe = process.argv.includes("--serve");
 const isDev = isWatch || isServe;
 
 async function run() {
-  const jsCtx = await esbuild.context({
-    entryPoints: ["src/index.js"],
+  const ctx = await esbuild.context({
+    entryPoints: [
+      { in: "src/index.js", out: "main" },
+      { in: "src/styles/main.scss", out: "main" },
+    ],
     bundle: true,
-    outfile: "main.js",
+    outdir: ".",
     minify: !isDev,
     sourcemap: isDev,
     target: ["es2018"],
     legalComments: "none",
     logLevel: "info",
-  });
-
-  const cssCtx = await esbuild.context({
-    entryPoints: ["src/styles/main.css"],
-    bundle: true,
-    outfile: "main.css",
-    minify: !isDev,
-    sourcemap: isDev,
-    legalComments: "none",
-    logLevel: "info",
+    plugins: [sassPlugin()],
   });
 
   if (isServe) {
-    // Un seul des deux contexts sert de serveur HTTP, l'autre reste en watch
-    const { host, port } = await jsCtx.serve({
+    await ctx.watch();
+    const { host, port } = await ctx.serve({
       servedir: ".",
       port: 3000,
-      cors: { origin: "*" }, // indispensable : Webflow fetch ce serveur depuis un autre domaine
+      cors: { origin: "*" },
     });
-    await cssCtx.watch();
 
     const displayHost = host && host !== "0.0.0.0" ? host : "localhost";
     console.log(`\n✅ Dev server sur http://${displayHost}:${port}`);
     console.log(`   → http://${displayHost}:${port}/main.css`);
-    console.log(`   → http://${displayHost}:${port}/main.js\n`);
+    console.log(`   → http://${displayHost}:${port}/main.js`);
+    console.log(`   → Live reload actif sur http://${displayHost}:${port}/esbuild\n`);
     console.log('Astuce : lance ensuite "npx cloudflared tunnel --url http://localhost:3000"');
     console.log("pour tester depuis ton site .webflow.io (staging).\n");
   } else if (isWatch) {
-    await jsCtx.watch();
-    await cssCtx.watch();
+    await ctx.watch();
     console.log("Watching...");
   } else {
-    await Promise.all([jsCtx.rebuild(), cssCtx.rebuild()]);
-    await Promise.all([jsCtx.dispose(), cssCtx.dispose()]);
+    await ctx.rebuild();
+    await ctx.dispose();
     console.log("✅ Build terminé : main.js + main.css");
   }
 }
