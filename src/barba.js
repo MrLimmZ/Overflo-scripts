@@ -21,6 +21,10 @@ import { initWhatStepsCrossfade } from "./what-steps-crossfade.js";
 import { initSliderTestimonials } from "./slider-testimonials.js";
 import { initDuoSlider } from "./duo-slider.js";
 import { initZoomReveal } from "./zoom-reveal.js";
+import {
+  initDecorativeVideos,
+  initVideoControls,
+} from "./decorative-videos.js";
 
 function assignPinPriorities(triggers) {
   const valid = triggers.filter((st) => st && st.trigger);
@@ -43,6 +47,9 @@ function reinitModules(root) {
   if (typeof ScrollTrigger !== "undefined") {
     ScrollTrigger.getAll().forEach((st) => st.kill());
   }
+
+  initDecorativeVideos(root);
+  initVideoControls(root);
 
   initCollapseEnhance(root);
   initTableEnhance(root);
@@ -85,7 +92,9 @@ function recalcScrollDimensions() {
 }
 
 function scrollToFilteredSectionIfNeeded(root) {
-  const hasCategoryParam = new URLSearchParams(window.location.search).has("category");
+  const hasCategoryParam = new URLSearchParams(window.location.search).has(
+    "category",
+  );
   if (!hasCategoryParam) return;
 
   const section = root.querySelector(".blog-list");
@@ -116,10 +125,8 @@ function initBarba() {
     transitions: [
       {
         name: "default-transition",
-        leave() {
-        },
-        enter() {
-        },
+        leave() {},
+        enter() {},
       },
     ],
   });

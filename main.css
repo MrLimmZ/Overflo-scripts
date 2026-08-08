@@ -6,6 +6,10 @@
   opacity: 0.35;
   pointer-events: none;
 }
+img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
 .navbar.nav-light-left .navbar-logo {
   color: #ffffff;
 }
