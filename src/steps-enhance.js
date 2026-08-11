@@ -21,16 +21,16 @@ export function initStepsEnhance(root = document) {
       stepNumber++;
 
       itemsHTML += `
-        <div class="rt-step">
-          <div class="rt-step-number">${stepNumber}</div>
+        <li class="rt-step">
+          <div class="rt-step-number" aria-hidden="true">${stepNumber}</div>
           <div class="rt-step-content">
-            <h5>${title}</h5>
+            <h3 class="rt-step-heading" data-skip-normalize>${title}</h3>
             ${descriptionHTML}
           </div>
-        </div>
+        </li>
       `;
     }
 
-    return `<div class="rt-steps-list">${itemsHTML}</div>`;
+    return `<ol class="rt-steps-list" role="list">${itemsHTML}</ol>`;
   });
 }

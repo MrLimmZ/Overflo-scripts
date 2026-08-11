@@ -32,7 +32,7 @@ export function initCtaParallax(root = document) {
             trigger: cta,
             start: "top bottom",
             end: "bottom top",
-            scrub: true,
+            scrub: 0.3,
           },
         },
       );

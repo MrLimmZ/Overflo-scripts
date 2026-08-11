@@ -12,6 +12,9 @@ import { initArticleToc } from "./article-toc.js";
 import { initCollapseEnhance } from "./collapse.js";
 import { initTableEnhance } from "./table-enhance.js";
 import { initStepsEnhance } from "./steps-enhance.js";
+import { normalizeHeadings } from "./heading-normalize.js";
+import { formatDates } from "./date-format.js";
+import { runSchema } from "./schema/index.js";
 import { initLogoMarquee } from "./logo-marquee.js";
 import { initTestimonials } from "./testimonials.js";
 import { initLargeQuoteReveal } from "./large-quote.js";
@@ -21,6 +24,7 @@ import { initWhatStepsCrossfade } from "./what-steps-crossfade.js";
 import { initSliderTestimonials } from "./slider-testimonials.js";
 import { initDuoSlider } from "./duo-slider.js";
 import { initZoomReveal } from "./zoom-reveal.js";
+import { initExplainSteps } from "./explain-steps.js";
 import {
   initDecorativeVideos,
   initVideoControls,
@@ -43,17 +47,29 @@ function assignPinPriorities(triggers) {
   });
 }
 
+function syncScrollbarVisibility(root) {
+  const container = root.matches?.('[data-barba="container"]')
+    ? root
+    : root.querySelector?.('[data-barba="container"]');
+
+  const shouldHide = container?.dataset.scrollbar === "false";
+  document.documentElement.toggleAttribute("data-scrollbar-false", shouldHide);
+}
+
 function reinitModules(root) {
+  syncScrollbarVisibility(root);
+
   if (typeof ScrollTrigger !== "undefined") {
     ScrollTrigger.getAll().forEach((st) => st.kill());
   }
 
   initDecorativeVideos(root);
   initVideoControls(root);
-
   initCollapseEnhance(root);
   initTableEnhance(root);
   initStepsEnhance(root);
+  normalizeHeadings(root);
+  formatDates(root);
 
   initNav(root);
   initNavTheme(root);
@@ -68,6 +84,7 @@ function reinitModules(root) {
   initTestimonials(root);
   initSliderTestimonials(root);
   initDuoSlider(root);
+  runSchema(root);
 
   const pinTriggers = [
     initLargeQuoteReveal(root),
@@ -75,6 +92,7 @@ function reinitModules(root) {
     initHowHorizontalScroll(root),
     initWhatStepsCrossfade(root),
     initZoomReveal(root),
+    initExplainSteps(root),
   ];
   assignPinPriorities(pinTriggers);
 
@@ -92,10 +110,9 @@ function recalcScrollDimensions() {
 }
 
 function scrollToFilteredSectionIfNeeded(root) {
-  const hasCategoryParam = new URLSearchParams(window.location.search).has(
-    "category",
-  );
-  if (!hasCategoryParam) return;
+  const params = new URLSearchParams(window.location.search);
+  const hasFilterParam = params.has("category") || params.has("search");
+  if (!hasFilterParam) return;
 
   const section = root.querySelector(".blog-list");
   if (!section) return;

@@ -70,10 +70,6 @@ export function initWhatStepsCrossfade(root = document) {
     });
   }
 
-  // Une SEULE timeline pilote toute la transition (sortie + entrée),
-  // dont l'achèvement est fiable même si elle est tuée/remplacée en
-  // cours de route (contrairement à des onComplete individuels par
-  // tween, qui ne se déclenchent jamais si le tween est tué avant).
   function buildCrossfadeTimeline(activeIndex) {
     const tl = gsap.timeline({
       onComplete: () => {

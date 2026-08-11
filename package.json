@@ -4,8 +4,11 @@
   "description": "",
   "main": "main.js",
   "scripts": {
-    "dev": "node build.js --serve",
     "build": "node build.js",
+    "dev:esbuild": "node build.js --serve",
+    "dev:proxy": "node dev-proxy.js",
+    "dev:tunnel": "cloudflared tunnel run webflow-dev",
+    "dev": "concurrently -n esbuild,proxy,tunnel -c blue,green,magenta \"npm:dev:esbuild\" \"npm:dev:proxy\" \"npm:dev:tunnel\"",
     "deploy": "node build.js && git add . && git commit -m 'update' && git push && node purge.js"
   },
   "repository": {
@@ -20,6 +23,7 @@
   },
   "homepage": "https://github.com/MrLimmZ/Overflo-scripts#readme",
   "devDependencies": {
+    "concurrently": "^9.0.0",
     "esbuild": "^0.28.1",
     "esbuild-sass-plugin": "^3.3.1",
     "sass": "^1.80.0"

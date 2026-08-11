@@ -1,6 +1,6 @@
 .slider-box {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   perspective: 1400px;
 }
 
@@ -16,7 +16,7 @@
   left: 50%;
   cursor: pointer;
   box-shadow: none;
-  will-change: transform, opacity;
+  backface-visibility: hidden;
 
   &.is-active {
     cursor: default;
@@ -35,6 +35,8 @@
 }
 
 .slider-dot {
+  padding: 0;
+  margin: 0;
   position: absolute;
   top: 50%;
   left: 50%;

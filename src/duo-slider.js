@@ -6,6 +6,18 @@ const STEP_OFFSET = 8;
 const DEPTH_SCALE = [1, 0.9, 0.78];
 const DEPTH_BG = ["#ffffff", "#f4f4f4", "#ededed"];
 const DOT_SPACING = 14;
+const MOBILE_BREAKPOINT = 767;
+
+// --- Réglages de l'effet "carte jetée" ------------------------------------
+const THROW_DISTANCE = 600;
+const THROW_ROTATION = 14;
+const THROW_ROTATE_Y = 35;
+const THROW_LIFT = 90;
+
+// --- Réglages du drag (mobile uniquement) ----------------------------------
+const DRAG_COMMIT_THRESHOLD = 70; // px à parcourir pour valider le swipe
+const DRAG_DIRECTION_LOCK = 10; // px avant de trancher "swipe horizontal" vs "scroll vertical"
+const DRAG_ROTATION_FACTOR = 0.04; // inclinaison pendant le drag, proportionnelle au déplacement
 
 export function initDuoSlider(root = document) {
   const section = root.querySelector(".duo-slider");
@@ -25,28 +37,91 @@ export function initDuoSlider(root = document) {
   let activeIndex = 0;
   let isAnimating = false;
   let pendingIndex = null;
+  // Côté du DERNIER jet effectué (1 = droite, -1 = gauche) — sert à
+  // faire revenir la carte par le même côté quand on clique "précédent",
+  // plutôt que toujours par la droite.
+  let lastThrowSide = 1;
 
   let reduced = prefersReducedMotion();
-  let DURATION = reduced ? 0 : 0.5;
+  let DURATION = reduced ? 0 : 0.6;
   let EASE = reduced ? "none" : "power3.inOut";
 
   onMotionPreferenceChange((value) => {
     reduced = value;
-    DURATION = reduced ? 0 : 0.5;
+    DURATION = reduced ? 0 : 0.6;
     EASE = reduced ? "none" : "power3.inOut";
   });
+
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
   const cards = items.map((item) => ({
     item,
     card: item.querySelector(".logo-card") || item,
+    wasActive: item.classList.contains("is-active"),
   }));
 
+  // --- Accessibilité : landmark carousel ----------------------------------
+  const heading = section
+    .closest(".duo")
+    ?.querySelector(".duo-header--title");
+  if (heading) {
+    if (!heading.id) heading.id = "duo-slider-heading";
+    section.setAttribute("aria-labelledby", heading.id);
+  }
+  section.setAttribute("role", "region");
+  section.setAttribute("aria-roledescription", "carrousel");
+
+  list.setAttribute("role", "list");
+  items.forEach((item) => {
+    item.setAttribute("role", "listitem");
+    item.setAttribute("aria-roledescription", "diapositive");
+  });
+
+  // --- Accessibilité : labels prev/next ------------------------------------
+  if (prevBtn) {
+    prevBtn.setAttribute("aria-label", "Partenaire précédent");
+    prevBtn.querySelectorAll("svg").forEach((svg) => svg.setAttribute("aria-hidden", "true"));
+  }
+  if (nextBtn) {
+    nextBtn.setAttribute("aria-label", "Partenaire suivant");
+    nextBtn.querySelectorAll("svg").forEach((svg) => svg.setAttribute("aria-hidden", "true"));
+  }
+
+  // --- Accessibilité : live region pour annoncer le changement -----------
+  let liveRegion = section.querySelector(".duo-slider-live-region");
+  if (!liveRegion) {
+    liveRegion = document.createElement("div");
+    liveRegion.className = "duo-slider-live-region sr-only";
+    liveRegion.setAttribute("aria-live", "polite");
+    liveRegion.setAttribute("aria-atomic", "true");
+    section.appendChild(liveRegion);
+  }
+
+  function getFocusableChildren(item) {
+    return item.querySelectorAll("a, button, [tabindex]");
+  }
+
+  function announceActiveItem() {
+    const activeItem = items[activeIndex];
+    const label =
+      activeItem?.querySelector(".logo-card--title")?.textContent?.trim() ||
+      `partenaire ${activeIndex + 1}`;
+    liveRegion.textContent = `${label}, ${activeIndex + 1} sur ${total}`;
+  }
+
+  // --- Dots : vrais <button> avec aria-label / aria-current ---------------
   let dots = [];
   if (dotsWrapper) {
     dotsWrapper.innerHTML = "";
+    dotsWrapper.setAttribute("role", "tablist");
+    dotsWrapper.setAttribute("aria-label", "Sélection du partenaire");
+
     dots = items.map((_, index) => {
-      const dot = document.createElement("div");
+      const dot = document.createElement("button");
+      dot.type = "button";
       dot.className = "duo-slider-dot";
+      dot.setAttribute("role", "tab");
+      dot.setAttribute("aria-label", `Aller au partenaire ${index + 1} sur ${total}`);
       dot.addEventListener("click", () => goTo(index));
       dotsWrapper.appendChild(dot);
       return dot;
@@ -82,6 +157,13 @@ export function initDuoSlider(root = document) {
 
       dot.style.pointerEvents = isVisible ? "auto" : "none";
       dot.classList.toggle("is-active", isActive);
+      dot.setAttribute("aria-selected", isActive ? "true" : "false");
+      dot.tabIndex = isVisible ? 0 : -1;
+      if (isActive) {
+        dot.setAttribute("aria-current", "true");
+      } else {
+        dot.removeAttribute("aria-current");
+      }
     });
   }
 
@@ -111,7 +193,11 @@ export function initDuoSlider(root = document) {
     };
   }
 
-  function render(animate = true) {
+  // direction : 1 = "suivant", -1 = "précédent".
+  // throwSide : 1 = jette/fait entrer à droite, -1 = à gauche — dissocié
+  // de `direction` pour permettre au drag de jeter dans le sens réel du
+  // geste, peu importe si logiquement c'est un "suivant".
+  function render(animate = true, direction = 1, throwSide = 1) {
     if (animate) isAnimating = true;
 
     let completed = 0;
@@ -128,15 +214,27 @@ export function initDuoSlider(root = document) {
       }
     }
 
-    cards.forEach(({ item, card }, index) => {
+    cards.forEach((entry) => {
+      const { item, card } = entry;
+      const index = items.indexOf(item);
       const diff = circularDiff(index, activeIndex, total);
       const forwardDist = diff < 0 ? total + diff : diff;
       const target = styleForDepth(forwardDist);
 
       const isActive = forwardDist === 0;
+      const isVisible = forwardDist <= 2;
+      const isBeingThrown = direction >= 0 && entry.wasActive && !isActive;
+      const isBecomingActive = direction < 0 && isActive && !entry.wasActive;
+      entry.wasActive = isActive;
+
       item.classList.toggle("is-active", isActive);
-      item.style.pointerEvents = forwardDist <= 2 ? "auto" : "none";
-      item.style.zIndex = target.zIndex;
+      item.style.pointerEvents = isVisible ? "auto" : "none";
+      item.style.zIndex = isBeingThrown || isBecomingActive ? total + 1 : target.zIndex;
+
+      item.setAttribute("aria-hidden", isVisible ? "false" : "true");
+      getFocusableChildren(item).forEach((el) => {
+        el.tabIndex = isVisible ? 0 : -1;
+      });
 
       gsap.killTweensOf(item);
       gsap.killTweensOf(card);
@@ -144,24 +242,119 @@ export function initDuoSlider(root = document) {
       if (!animate) {
         gsap.set(item, {
           top: target.top,
+          x: 0,
           xPercent: -50,
+          rotate: 0,
           scale: target.scale,
           opacity: target.opacity,
         });
         gsap.set(card, { backgroundColor: target.background });
+        entry.wasActive = isActive;
         return;
       }
 
-      gsap.to(item, {
-        top: target.top,
-        xPercent: -50,
-        scale: target.scale,
-        opacity: target.opacity,
-        duration: DURATION,
-        ease: EASE,
-        overwrite: true,
-        onComplete: onOneComplete,
-      });
+      if (isBeingThrown) {
+        // Le sens du jet suit throwSide — toujours à droite pour un
+        // clic/clavier (throwSide=1 par défaut), mais dans le sens
+        // réel du geste quand déclenché par un drag.
+        const throwX = THROW_DISTANCE * throwSide;
+        const throwRotate = THROW_ROTATION * throwSide;
+        const throwRotateY = THROW_ROTATE_Y * throwSide;
+        lastThrowSide = throwSide; // mémorisé pour l'entrée du prochain "précédent"
+
+        gsap.to(item, {
+          keyframes: {
+            "60%": {
+              x: throwX * 0.6,
+              y: -THROW_LIFT,
+              rotate: throwRotate * 0.6,
+              rotateY: throwRotateY * 0.6,
+              scale: 1.05,
+              ease: "power1.out",
+            },
+            "100%": {
+              x: throwX,
+              y: THROW_LIFT * 0.3,
+              rotate: throwRotate,
+              rotateY: throwRotateY,
+              scale: 1.02,
+              ease: "power1.in",
+            },
+          },
+          duration: DURATION,
+          overwrite: true,
+          onComplete: () => {
+            gsap.set(item, {
+              top: target.top,
+              x: 0,
+              xPercent: -50,
+              y: 0,
+              rotate: 0,
+              rotateY: 0,
+              scale: target.scale,
+              opacity: target.opacity,
+            });
+            item.style.zIndex = target.zIndex;
+            onOneComplete();
+          },
+        });
+      } else if (isBecomingActive) {
+        // Revient du même côté que le dernier jet, pas toujours de la
+        // droite — cohérent avec un drag qui aurait jeté à gauche.
+        const entranceX = THROW_DISTANCE * lastThrowSide;
+        const entranceRotate = THROW_ROTATION * lastThrowSide;
+        const entranceRotateY = THROW_ROTATE_Y * lastThrowSide;
+
+        gsap.set(item, {
+          top: target.top,
+          x: entranceX,
+          xPercent: -50,
+          y: THROW_LIFT * 0.3,
+          rotate: entranceRotate,
+          rotateY: entranceRotateY,
+          scale: 1.02,
+          opacity: 1,
+        });
+
+        gsap.to(item, {
+          keyframes: {
+            "40%": {
+              x: entranceX * 0.6,
+              y: -THROW_LIFT,
+              rotate: entranceRotate * 0.6,
+              rotateY: entranceRotateY * 0.6,
+              scale: 1.05,
+              ease: "power1.out",
+            },
+            "100%": {
+              x: 0,
+              xPercent: -50,
+              y: 0,
+              rotate: 0,
+              rotateY: 0,
+              scale: target.scale,
+              ease: "power1.in",
+            },
+          },
+          duration: DURATION,
+          overwrite: true,
+          onComplete: () => {
+            item.style.zIndex = target.zIndex;
+            onOneComplete();
+          },
+        });
+      } else {
+        gsap.to(item, {
+          top: target.top,
+          xPercent: -50,
+          scale: target.scale,
+          opacity: target.opacity,
+          duration: DURATION,
+          ease: EASE,
+          overwrite: true,
+          onComplete: onOneComplete,
+        });
+      }
 
       gsap.to(card, {
         backgroundColor: target.background,
@@ -172,9 +365,10 @@ export function initDuoSlider(root = document) {
     });
 
     renderDots();
+    announceActiveItem();
   }
 
-  function goTo(index) {
+  function goTo(index, { throwSide = 1 } = {}) {
     const target = ((index % total) + total) % total;
 
     if (isAnimating) {
@@ -182,8 +376,11 @@ export function initDuoSlider(root = document) {
       return;
     }
 
+    const dirDiff = circularDiff(target, activeIndex, total);
+    const direction = dirDiff === 0 ? 1 : Math.sign(dirDiff);
+
     activeIndex = target;
-    render();
+    render(true, direction, throwSide);
   }
 
   prevBtn?.addEventListener("click", (e) => {
@@ -196,8 +393,123 @@ export function initDuoSlider(root = document) {
     goTo(activeIndex + 1);
   });
 
+  section.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      goTo(activeIndex - 1);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      goTo(activeIndex + 1);
+    }
+  });
+
+  // --- Drag façon "Tinder" (mobile uniquement) ------------------------------
+  //
+  // N'importe quel sens dismiss la carte active et avance à la
+  // suivante — la carte continue de voler dans le sens où elle a été
+  // tirée (pas toujours à droite comme pour un clic bouton). Suit le
+  // doigt 1:1 pendant le drag, sans interpolation.
+  let dragState = null;
+
+  function isDragEnabled() {
+    return mobileMq.matches && !prefersReducedMotion();
+  }
+
+  function onPointerDown(e) {
+    if (!isDragEnabled() || isAnimating) return;
+
+    const item = e.target.closest(".duo-slider-item.is-active");
+    if (!item) return;
+
+    dragState = {
+      pointerId: e.pointerId,
+      item,
+      startX: e.clientX,
+      startY: e.clientY,
+      deltaX: 0,
+      deltaY: 0,
+      locked: null,
+    };
+  }
+
+  function lockPageScroll() {
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+  }
+
+  function unlockPageScroll() {
+    document.documentElement.style.overflow = "";
+    document.body.style.overflow = "";
+  }
+
+  function onPointerMove(e) {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+
+    dragState.deltaX = e.clientX - dragState.startX;
+    dragState.deltaY = e.clientY - dragState.startY;
+
+    if (dragState.locked === null) {
+      if (Math.abs(dragState.deltaX) > DRAG_DIRECTION_LOCK) {
+        dragState.locked = "x";
+        dragState.item.setPointerCapture(dragState.pointerId);
+        gsap.killTweensOf(dragState.item);
+        lockPageScroll(); // swipe horizontal confirmé : plus de scroll de page tant que ça dure
+      } else if (Math.abs(dragState.deltaY) > DRAG_DIRECTION_LOCK) {
+        dragState.locked = "y"; // scroll de page : on abandonne le drag
+        dragState = null;
+        return;
+      } else {
+        return;
+      }
+    }
+
+    if (dragState.locked !== "x") return;
+
+    e.preventDefault();
+
+    dragState.item.style.zIndex = total + 1;
+    gsap.set(dragState.item, {
+      x: dragState.deltaX,
+      y: dragState.deltaY * 0.2,
+      xPercent: -50,
+      rotate: dragState.deltaX * DRAG_ROTATION_FACTOR,
+    });
+  }
+
+  function onPointerUp(e) {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+
+    const { item, deltaX, locked } = dragState;
+    dragState = null;
+
+    if (locked === "x") unlockPageScroll();
+    if (locked !== "x") return;
+
+    if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD) {
+      // N'importe quel sens = suivant, jeté dans le sens réel du geste.
+      goTo(activeIndex + 1, { throwSide: Math.sign(deltaX) });
+    } else {
+      gsap.to(item, {
+        x: 0,
+        y: 0,
+        rotate: 0,
+        xPercent: -50,
+        duration: 0.3,
+        ease: "power2.out",
+      });
+    }
+  }
+
+  list.addEventListener("pointerdown", onPointerDown);
+  window.addEventListener("pointermove", onPointerMove, { passive: false });
+  window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerUp); 
   let resizeTimer;
+  let lastWidth = window.innerWidth;
   window.addEventListener("resize", () => {
+    if (window.innerWidth === lastWidth) return;
+    lastWidth = window.innerWidth;
+
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(setupLayout, 150);
   });

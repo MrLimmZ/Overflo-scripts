@@ -8,6 +8,27 @@
 }
 
 img {
-  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
   user-select: none;
+  -webkit-user-drag: none;
+
+}
+
+@media screen and (min-width: 768px) {
+  html[data-scrollbar-false] {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zoom-content, .explain-step, .slider-box-item {
+    transition: none !important;
+    animation: none !important;
+  }
 }

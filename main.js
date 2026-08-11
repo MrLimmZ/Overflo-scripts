@@ -2,6 +2,20 @@
   // src/core.js
   function initLenis() {
     if (typeof Lenis === "undefined") return;
+    if ("scrollRestoration" in history) {
+      history.scrollRestoration = "manual";
+    }
+    window.scrollTo(0, 0);
+    if (typeof ScrollTrigger !== "undefined") {
+      ScrollTrigger.config({ autoRefreshEvents: "visibilitychange,DOMContentLoaded,load" });
+    }
+    const isMobile = window.matchMedia("(max-width: 767px)").matches;
+    if (isMobile) {
+      if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
+        gsap.registerPlugin(ScrollTrigger);
+      }
+      return;
+    }
     const lenis = new Lenis({
       duration: 1.2,
       smoothWheel: true,
@@ -60,10 +74,15 @@
   }
 
   // src/collapse.js
-  var OPEN_ICON_SVG = `<div class="icon"><div class="icon"><svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 20 20" fill="none"><path d="M10 4.16797V15.8346" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4.16797 10H15.8346" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>`;
-  var CLOSE_ICON_SVG = `<div class="icon"><div class="icon"><svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 20 20" fill="none"><path d="M4.16797 10H15.8346" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>`;
+  var OPEN_ICON_SVG = `<div class="icon"><div class="icon"><svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 4.16797V15.8346" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4.16797 10H15.8346" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>`;
+  var CLOSE_ICON_SVG = `<div class="icon"><div class="icon"><svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4.16797 10H15.8346" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>`;
   var COLLAPSE_BLOCK_REGEX = /(?:<p>)?\[collapse\](?:<\/p>)?([\s\S]*?)(?:<p>)?\[\/collapse\](?:<\/p>)?/gi;
   var QUESTION_REGEX = /(?:<p>)?\[q\]([\s\S]*?)\[\/q\](?:<\/p>)?/gi;
+  var idCounter = 0;
+  function nextId(prefix) {
+    idCounter += 1;
+    return `${prefix}-${idCounter}`;
+  }
   function initCollapseEnhance(root = document) {
     const contentEl = root.querySelector(".article-content-text") || root;
     if (!COLLAPSE_BLOCK_REGEX.test(contentEl.innerHTML)) return;
@@ -75,14 +94,20 @@
         const question = (parts[i] || "").trim();
         const answerHTML = (parts[i + 1] || "").trim();
         if (!question) continue;
+        const questionId = nextId("collapse-question");
+        const answerId = nextId("collapse-answer");
         itemsHTML += `
         <div class="collapse-item">
-          <div class="collapse-item-top">
-            <div class="collapse-item-question">${question}</div>
-            <div class="collapse-item-open icon-xs">${OPEN_ICON_SVG}</div>
-            <div class="collapse-item-close icon-xs">${CLOSE_ICON_SVG}</div>
-          </div>
-          <div class="collapse-item-content">
+          <h3 data-skip-normalize>
+            <div class="collapse-item-top">
+              <div class="collapse-item-question">${question}</div>
+              <a href="#" class="collapse-item-action w-inline-block" id="${questionId}" aria-controls="${answerId}" aria-expanded="false" role="button" tabindex="0">
+                <div class="collapse-item-open icon-xs">${OPEN_ICON_SVG}</div>
+                <div class="collapse-item-close icon-xs">${CLOSE_ICON_SVG}</div>
+              </a>
+            </div>
+          </h3>
+          <div class="collapse-item-content" id="${answerId}" aria-labelledby="${questionId}" role="region" aria-hidden="true">
             <div class="collapse-item-answer w-richtext">${answerHTML}</div>
           </div>
         </div>
@@ -91,57 +116,113 @@
       return `<div class="rt-collapse-list">${itemsHTML}</div>`;
     });
   }
+  function ensureAccessibleMarkup(item) {
+    const row = item.querySelector(".collapse-item-top");
+    const trigger = item.querySelector(".collapse-item-action") || row;
+    const content = item.querySelector(".collapse-item-content");
+    if (!trigger || !content) return { trigger: null, content: null };
+    if (!trigger.id) trigger.id = nextId("collapse-question");
+    if (!content.id) content.id = nextId("collapse-answer");
+    trigger.setAttribute("aria-controls", content.id);
+    content.setAttribute("aria-labelledby", trigger.id);
+    if (!content.hasAttribute("role")) content.setAttribute("role", "region");
+    if (!trigger.hasAttribute("aria-expanded")) {
+      trigger.setAttribute("aria-expanded", item.classList.contains("is-open") ? "true" : "false");
+    }
+    if (!content.hasAttribute("aria-hidden")) {
+      content.setAttribute("aria-hidden", item.classList.contains("is-open") ? "false" : "true");
+    }
+    if (trigger.tagName !== "BUTTON") {
+      if (!trigger.hasAttribute("role")) trigger.setAttribute("role", "button");
+      if (!trigger.hasAttribute("tabindex")) trigger.tabIndex = 0;
+    }
+    if (row && row !== trigger) {
+      row.removeAttribute("role");
+      row.removeAttribute("tabindex");
+      row.removeAttribute("aria-expanded");
+    }
+    return { trigger, content };
+  }
+  function setExpanded(item, trigger, content, expanded, { duration, ease }) {
+    item.classList.toggle("is-open", expanded);
+    trigger.setAttribute("aria-expanded", expanded ? "true" : "false");
+    content.setAttribute("aria-hidden", expanded ? "false" : "true");
+    const openIcon = item.querySelector(".collapse-item-open");
+    const closeIcon = item.querySelector(".collapse-item-close");
+    if (openIcon) openIcon.style.display = expanded ? "none" : "flex";
+    if (closeIcon) closeIcon.style.display = expanded ? "flex" : "none";
+    content.querySelectorAll("a, button, [tabindex]").forEach((el) => {
+      el.tabIndex = expanded ? 0 : -1;
+    });
+    gsap.killTweensOf(content);
+    if (expanded) {
+      gsap.set(content, { height: "auto" });
+      const target = content.scrollHeight;
+      gsap.fromTo(
+        content,
+        { height: 0 },
+        {
+          height: target,
+          duration,
+          ease,
+          overwrite: true,
+          onComplete: () => gsap.set(content, { height: "auto" })
+        }
+      );
+    } else {
+      gsap.set(content, { height: content.scrollHeight });
+      gsap.to(content, {
+        height: 0,
+        duration,
+        ease,
+        overwrite: true
+      });
+    }
+  }
   function initCollapse() {
     let reduced = prefersReducedMotion();
     onMotionPreferenceChange((value) => {
       reduced = value;
     });
-    document.addEventListener("click", (e) => {
-      const trigger = e.target.closest(".collapse-item-top");
-      if (!trigger) return;
-      const item = trigger.closest(".collapse-item");
-      const content = item.querySelector(".collapse-item-content");
-      const openIcon = item.querySelector(".collapse-item-open");
-      const closeIcon = item.querySelector(".collapse-item-close");
+    document.querySelectorAll(".collapse-item").forEach((item) => {
+      const { trigger, content } = ensureAccessibleMarkup(item);
+      if (trigger && content && !item.classList.contains("is-open")) {
+        gsap.set(content, { height: 0 });
+      }
+    });
+    function handleTrigger(row) {
+      const item = row.closest(".collapse-item");
+      if (!item) return;
+      const { trigger, content } = ensureAccessibleMarkup(item);
+      if (!trigger || !content) return;
       const isOpen = item.classList.contains("is-open");
       const duration = reduced ? 0 : 0.45;
       const openDuration = reduced ? 0 : 0.5;
+      const ease = "power2.inOut";
       document.querySelectorAll(".collapse-item.is-open").forEach((openItem) => {
         if (openItem === item) return;
-        openItem.classList.remove("is-open");
-        gsap.to(openItem.querySelector(".collapse-item-content"), {
-          height: 0,
-          duration,
-          ease: "power2.inOut",
-          overwrite: true
-        });
-        openItem.querySelector(".collapse-item-open").style.display = "flex";
-        openItem.querySelector(".collapse-item-close").style.display = "none";
-      });
-      if (isOpen) {
-        item.classList.remove("is-open");
-        gsap.to(content, {
-          height: 0,
-          duration,
-          ease: "power2.inOut",
-          overwrite: true
-        });
-        openIcon.style.display = "flex";
-        closeIcon.style.display = "none";
-        return;
-      }
-      item.classList.add("is-open");
-      openIcon.style.display = "none";
-      closeIcon.style.display = "flex";
-      gsap.to(content, {
-        height: content.scrollHeight,
-        duration: openDuration,
-        ease: "power2.inOut",
-        overwrite: true,
-        onComplete: () => {
-          gsap.set(content, { height: "auto" });
+        const other = ensureAccessibleMarkup(openItem);
+        if (other.trigger && other.content) {
+          setExpanded(openItem, other.trigger, other.content, false, { duration, ease });
         }
       });
+      setExpanded(item, trigger, content, !isOpen, {
+        duration: isOpen ? duration : openDuration,
+        ease
+      });
+    }
+    document.addEventListener("click", (e) => {
+      const row = e.target.closest(".collapse-item-top");
+      if (!row) return;
+      e.preventDefault();
+      handleTrigger(row);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== " ") return;
+      const row = e.target.closest(".collapse-item-top");
+      if (!row) return;
+      e.preventDefault();
+      handleTrigger(row);
     });
   }
   window.Webflow || (window.Webflow = []);
@@ -150,9 +231,104 @@
   });
 
   // src/nav.js
+  var FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
   function initNav(root = document) {
-    const nav = root.querySelector(".nav");
-    if (!nav) return;
+    const navbar = root.querySelector(".navbar");
+    const toggle = root.querySelector(".navbar-toggle");
+    const panel = root.querySelector("#mobile-menu, .navbar-content--mobile");
+    if (!navbar || !toggle || !panel) return;
+    if (navbar.dataset.navInit) return;
+    navbar.dataset.navInit = "1";
+    let isOpen = false;
+    let lastFocused = null;
+    panel.inert = true;
+    panel.setAttribute("aria-hidden", "true");
+    if (!panel.hasAttribute("tabindex")) panel.tabIndex = -1;
+    gsap.set(panel, { display: "flex", height: 0, overflow: "hidden" });
+    function getFocusableInPanel() {
+      return Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR));
+    }
+    function setExpanded2(expanded) {
+      toggle.setAttribute("aria-expanded", String(expanded));
+      toggle.setAttribute("aria-label", expanded ? "Close menu" : "Open menu");
+    }
+    function animatePanel(expand) {
+      const reduced = prefersReducedMotion();
+      const duration = reduced ? 0 : 0.4;
+      gsap.killTweensOf(panel);
+      if (expand) {
+        const target = panel.scrollHeight;
+        gsap.fromTo(
+          panel,
+          { height: 0 },
+          {
+            height: target,
+            duration,
+            ease: "power2.inOut",
+            onComplete: () => gsap.set(panel, { height: "auto" })
+          }
+        );
+      } else {
+        gsap.set(panel, { height: panel.scrollHeight });
+        gsap.to(panel, { height: 0, duration, ease: "power2.inOut" });
+      }
+    }
+    function openMenu() {
+      var _a;
+      if (isOpen) return;
+      isOpen = true;
+      lastFocused = document.activeElement;
+      navbar.classList.add("is-open");
+      panel.inert = false;
+      panel.removeAttribute("aria-hidden");
+      setExpanded2(true);
+      animatePanel(true);
+      (_a = window.lenis) == null ? void 0 : _a.stop();
+      panel.focus({ preventScroll: true });
+      document.addEventListener("keydown", onKeydown);
+    }
+    function closeMenu({ restoreFocus = true } = {}) {
+      var _a;
+      if (!isOpen) return;
+      isOpen = false;
+      navbar.classList.remove("is-open");
+      panel.setAttribute("aria-hidden", "true");
+      panel.inert = true;
+      setExpanded2(false);
+      animatePanel(false);
+      (_a = window.lenis) == null ? void 0 : _a.start();
+      document.removeEventListener("keydown", onKeydown);
+      if (restoreFocus) {
+        (lastFocused || toggle).focus();
+      }
+    }
+    function onKeydown(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMenu();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const focusable = getFocusableInPanel();
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    toggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (isOpen) closeMenu();
+      else openMenu();
+    });
+    panel.querySelectorAll("a").forEach((link) => {
+      link.addEventListener("click", () => closeMenu({ restoreFocus: false }));
+    });
   }
 
   // src/nav-theme.js
@@ -186,30 +362,49 @@
       return total / count;
     });
   }
+  function horizontallyOverlaps(rectA, rectB) {
+    return rectA.left < rectB.right && rectA.right > rectB.left;
+  }
   function initNavTheme(root = document) {
     const nav = document.querySelector(".navbar");
     if (!nav) return;
+    const zones = [
+      { el: nav.querySelector(".navbar-left"), className: "nav-light-logo", side: "left" },
+      { el: nav.querySelector(".navbar-right .menu"), className: "nav-light-menu", side: "right" },
+      { el: nav.querySelector(".navbar-right .button"), className: "nav-light-button", side: "right" }
+    ].filter((zone) => zone.el);
     const sections = root.querySelectorAll("[data-nav-theme]");
     if (!sections.length || typeof ScrollTrigger === "undefined") {
-      nav.classList.remove("nav-light-left", "nav-light-right");
+      zones.forEach((zone) => zone.el.classList.remove(zone.className));
       return;
     }
-    const triggers = [];
+    const entries = [];
     const triggerOffset = nav.offsetHeight / 2;
     function recompute() {
-      const activeLeft = [...triggers].reverse().find((t) => t.trigger.isActive && (t.side === "left" || t.side === "both"));
-      const activeRight = [...triggers].reverse().find((t) => t.trigger.isActive && (t.side === "right" || t.side === "both"));
-      const themeLeft = activeLeft ? activeLeft.theme : "dark";
-      const themeRight = activeRight ? activeRight.theme : "dark";
-      nav.classList.toggle("nav-light-left", themeLeft === "light");
-      nav.classList.toggle("nav-light-right", themeRight === "light");
+      const active = [...entries].reverse().find((entry) => entry.trigger.isActive && entry.theme);
+      if (!active || active.theme !== "light") {
+        zones.forEach((zone) => zone.el.classList.remove(zone.className));
+        return;
+      }
+      if (!active.img) {
+        zones.forEach((zone) => {
+          const matchesSide = !active.side || active.side === "both" || active.side === zone.side;
+          zone.el.classList.toggle(zone.className, matchesSide);
+        });
+        return;
+      }
+      const imgRect = active.img.getBoundingClientRect();
+      zones.forEach((zone) => {
+        const zoneRect = zone.el.getBoundingClientRect();
+        zone.el.classList.toggle(zone.className, horizontallyOverlaps(zoneRect, imgRect));
+      });
     }
     sections.forEach((section) => {
       const declaredTheme = section.dataset.navTheme;
-      const side = section.dataset.navThemeSide || "both";
       const entry = {
         theme: declaredTheme === "auto" ? "dark" : declaredTheme,
-        side
+        img: null,
+        side: section.dataset.navThemeSide || null
       };
       entry.trigger = ScrollTrigger.create({
         trigger: section,
@@ -217,7 +412,7 @@
         end: `bottom top+=${triggerOffset}`,
         onToggle: recompute
       });
-      triggers.push(entry);
+      entries.push(entry);
       if (declaredTheme !== "auto") return;
       const imgSelector = section.dataset.navThemeImage || "img";
       const img = section.tagName === "IMG" ? section : section.querySelector(imgSelector);
@@ -225,6 +420,7 @@
         console.warn('[NavTheme] data-nav-theme="auto" mais aucune image trouv\xE9e dans', section);
         return;
       }
+      entry.img = img;
       getImageLuminance(img).then((luminance) => {
         entry.theme = luminance > LUMINANCE_THRESHOLD ? "dark" : "light";
         recompute();
@@ -232,6 +428,7 @@
         console.warn("[NavTheme] Analyse de l'image impossible, fallback:", entry.theme, err);
       });
     });
+    window.addEventListener("resize", recompute);
     recompute();
   }
 
@@ -265,7 +462,7 @@
               trigger: cta,
               start: "top bottom",
               end: "bottom top",
-              scrub: true
+              scrub: 0.3
             }
           }
         );
@@ -322,7 +519,7 @@
               trigger: hero,
               start: "top top",
               end: "bottom top",
-              scrub: true
+              scrub: 0.3
             }
           }
         );
@@ -402,7 +599,7 @@
       console.warn("[BlogFilter] [data-category-source] trouv\xE9 mais aucun [data-category-slug] dedans");
     }
     select.innerHTML = "";
-    select.appendChild(new Option("Toutes cat\xE9gories", "all"));
+    select.appendChild(new Option("All categories", "all"));
     slugEls.forEach((el) => {
       var _a, _b, _c;
       const slug = el.dataset.categorySlug;
@@ -420,6 +617,11 @@
     const listWrapper = root.querySelector("[data-blog-list]");
     const items = listWrapper ? listWrapper.querySelectorAll(".w-dyn-item") : [];
     const emptyState = root.querySelector("[data-blog-empty]");
+    if (emptyState) {
+      emptyState.setAttribute("role", "status");
+      emptyState.setAttribute("aria-live", "polite");
+      emptyState.hidden = true;
+    }
     populateCategorySelect(root, categorySelect);
     const categoryFromUrl = new URLSearchParams(window.location.search).get("category");
     if (categoryFromUrl && categorySelect) {
@@ -458,8 +660,11 @@
         item.style.display = visible ? "" : "none";
         if (visible) visibleCount++;
       });
+      const hasResults = visibleCount > 0;
+      listWrapper.setAttribute("aria-hidden", hasResults ? "false" : "true");
       if (emptyState) {
-        emptyState.classList.toggle("is-visible", visibleCount === 0);
+        emptyState.classList.toggle("is-visible", !hasResults);
+        emptyState.hidden = hasResults;
       }
       if (typeof ScrollTrigger !== "undefined") {
         ScrollTrigger.refresh();
@@ -570,7 +775,13 @@
     });
     function setActive(activeEntry) {
       entries.forEach(({ link, option }) => {
-        link.classList.toggle("is-active", link === (activeEntry == null ? void 0 : activeEntry.link));
+        const isActive = link === (activeEntry == null ? void 0 : activeEntry.link);
+        link.classList.toggle("is-active", isActive);
+        if (isActive) {
+          link.setAttribute("aria-current", "location");
+        } else {
+          link.removeAttribute("aria-current");
+        }
         if (option) option.selected = option === (activeEntry == null ? void 0 : activeEntry.option);
       });
     }
@@ -624,7 +835,7 @@
   }
 
   // src/table-enhance.js
-  var TABLE_BLOCK_REGEX = /(?:<p>)?\[table(\s+split)?\](?:<\/p>)?([\s\S]*?)(?:<p>)?\[\/table\](?:<\/p>)?/gi;
+  var TABLE_BLOCK_REGEX = /(?:<p>)?\[table(\s+split)?(?:\s+caption="([^"]*)")?\](?:<\/p>)?([\s\S]*?)(?:<p>)?\[\/table\](?:<\/p>)?/gi;
   function cleanRow(line) {
     return line.split(",").map((cell) => cell.trim());
   }
@@ -633,15 +844,35 @@
     if (!contentEl) return;
     if (!TABLE_BLOCK_REGEX.test(contentEl.innerHTML)) return;
     TABLE_BLOCK_REGEX.lastIndex = 0;
-    contentEl.innerHTML = contentEl.innerHTML.replace(TABLE_BLOCK_REGEX, (match, splitFlag, body) => {
-      const useSplit = Boolean(splitFlag);
-      const rows = body.replace(/<\/p>|<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").split("\n").map((line) => line.trim()).filter(Boolean).map(cleanRow);
-      if (!rows.length) return match;
-      const [headerRow, ...bodyRows] = rows;
-      const theadHTML = `<tr>${headerRow.map((cell) => `<th>${cell}</th>`).join("")}</tr>`;
-      const tbodyHTML = bodyRows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("");
-      return `<div class="rt-table-wrap"><table class="rt-table${useSplit ? " rt-table--split" : ""}"><thead>${theadHTML}</thead><tbody>${tbodyHTML}</tbody></table></div>`;
-    });
+    contentEl.innerHTML = contentEl.innerHTML.replace(
+      TABLE_BLOCK_REGEX,
+      (match, splitFlag, caption, body) => {
+        const useSplit = Boolean(splitFlag);
+        const rows = body.replace(/<\/p>|<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").split("\n").map((line) => line.trim()).filter(Boolean).map(cleanRow);
+        if (!rows.length) return match;
+        const [headerRow, ...bodyRows] = rows;
+        const theadHTML = `<tr>${headerRow.map((cell) => `<th scope="col">${cell}</th>`).join("")}</tr>`;
+        const tbodyHTML = bodyRows.map((row) => {
+          if (!useSplit) {
+            return `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
+          }
+          const [rowHeader, ...rest] = row;
+          const cellsHTML = rest.map((cell) => `<td>${cell}</td>`).join("");
+          return `<tr><th scope="row">${rowHeader}</th>${cellsHTML}</tr>`;
+        }).join("");
+        const captionText = (caption || "").trim();
+        const captionHTML = captionText ? `<caption>${captionText}</caption>` : `<caption class="sr-only">Data table</caption>`;
+        return `
+        <div class="rt-table-wrap">
+          <table class="rt-table${useSplit ? " rt-table--split" : ""}">
+            ${captionHTML}
+            <thead>${theadHTML}</thead>
+            <tbody>${tbodyHTML}</tbody>
+          </table>
+        </div>
+      `;
+      }
+    );
   }
 
   // src/steps-enhance.js
@@ -661,17 +892,312 @@
         if (!title) continue;
         stepNumber++;
         itemsHTML += `
-        <div class="rt-step">
-          <div class="rt-step-number">${stepNumber}</div>
+        <li class="rt-step">
+          <div class="rt-step-number" aria-hidden="true">${stepNumber}</div>
           <div class="rt-step-content">
-            <h5>${title}</h5>
+            <h3 class="rt-step-heading" data-skip-normalize>${title}</h3>
             ${descriptionHTML}
           </div>
-        </div>
+        </li>
       `;
       }
-      return `<div class="rt-steps-list">${itemsHTML}</div>`;
+      return `<ol class="rt-steps-list" role="list">${itemsHTML}</ol>`;
     });
+  }
+
+  // src/heading-normalize.js
+  function normalizeHeadings(root = document, { startLevel = 2 } = {}) {
+    const container = root.querySelector(".article-content-text");
+    if (!container) return;
+    const headings = Array.from(
+      container.querySelectorAll("h1, h2, h3, h4, h5, h6")
+    ).filter((h) => !h.hasAttribute("data-skip-normalize"));
+    if (!headings.length) return;
+    headings.forEach((heading) => {
+      const originalLevel = Number(heading.tagName[1]);
+      heading.classList.add(`rt-heading-${originalLevel}`);
+    });
+    const usedLevels = [...new Set(headings.map((h) => Number(h.tagName[1])))].sort((a, b) => a - b);
+    const levelMap = {};
+    usedLevels.forEach((level, index) => {
+      levelMap[level] = Math.min(startLevel + index, 6);
+    });
+    headings.forEach((heading) => {
+      const currentLevel = Number(heading.tagName[1]);
+      const newLevel = levelMap[currentLevel];
+      if (newLevel === currentLevel) return;
+      const replacement = document.createElement(`h${newLevel}`);
+      Array.from(heading.attributes).forEach((attr) => {
+        replacement.setAttribute(attr.name, attr.value);
+      });
+      replacement.innerHTML = heading.innerHTML;
+      heading.replaceWith(replacement);
+    });
+  }
+
+  // src/date-format.js
+  var DATE_PATTERN = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
+  function formatDates(root = document) {
+    root.querySelectorAll("[data-date-format]").forEach((el) => {
+      const text = el.textContent.trim();
+      const match = text.match(DATE_PATTERN);
+      if (!match) return;
+      const [, day, month, year] = match;
+      el.textContent = `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year}`;
+    });
+  }
+
+  // src/schema/utils.js
+  function hasBarbaNamespace(root, name) {
+    var _a, _b;
+    return Boolean(
+      ((_a = root == null ? void 0 : root.dataset) == null ? void 0 : _a.barbaNamespace) === name || ((_b = root == null ? void 0 : root.querySelector) == null ? void 0 : _b.call(root, `[data-barba-namespace="${name}"]`))
+    );
+  }
+  function pathnameStartsWith(prefix) {
+    return window.location.pathname.startsWith(prefix);
+  }
+  function isRealUrl(url) {
+    return Boolean(url) && url !== "#" && !url.startsWith("#");
+  }
+  function parseDmyDate(text) {
+    const match = (text || "").trim().match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+    if (!match) return null;
+    const [, day, month, year] = match;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  function getBreadcrumbEntities(root, selector = ".breadcrumbs") {
+    var _a, _b;
+    const nav = root.querySelector(selector);
+    if (!nav) return [];
+    const items = Array.from(nav.querySelectorAll("a")).map((a) => ({
+      name: a.textContent.trim(),
+      url: a.href
+    }));
+    const activeText = (_b = (_a = nav.querySelector(".breadcrumbs-active")) == null ? void 0 : _a.textContent) == null ? void 0 : _b.trim();
+    if (activeText) items.push({ name: activeText, url: window.location.href });
+    return items.map((item, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      name: item.name,
+      item: item.url
+    }));
+  }
+  function getFaqEntities(root, scopeSelector) {
+    const scope = scopeSelector ? root.querySelector(scopeSelector) : root;
+    if (!scope) return [];
+    return Array.from(scope.querySelectorAll(".collapse-item")).map((item) => {
+      var _a, _b, _c, _d;
+      const question = (_b = (_a = item.querySelector(".collapse-item-question")) == null ? void 0 : _a.textContent) == null ? void 0 : _b.trim();
+      const answer = (_d = (_c = item.querySelector(".collapse-item-answer")) == null ? void 0 : _c.textContent) == null ? void 0 : _d.trim();
+      if (!question || !answer) return null;
+      return {
+        "@type": "Question",
+        name: question,
+        acceptedAnswer: { "@type": "Answer", text: answer }
+      };
+    }).filter(Boolean);
+  }
+  function injectGraph(graph) {
+    var _a;
+    (_a = document.getElementById("schema-dynamic")) == null ? void 0 : _a.remove();
+    if (!graph.length) return;
+    const script = document.createElement("script");
+    script.type = "application/ld+json";
+    script.id = "schema-dynamic";
+    script.textContent = JSON.stringify({ "@context": "https://schema.org", "@graph": graph });
+    document.head.appendChild(script);
+  }
+
+  // src/schema/builders.js
+  var ORG_REF = { "@type": "Organization", name: "Overflo", url: "https://www.overflo.com" };
+  var APP_RATING = {
+    ratingValue: null,
+    ratingCount: null
+  };
+  function buildSoftwareAppSchema(root) {
+    var _a, _b;
+    const links = Array.from(root.querySelectorAll("a")).filter(
+      (a) => {
+        var _a2;
+        return (_a2 = a.textContent) == null ? void 0 : _a2.trim().match(/^(App Store|Google Play)$/i);
+      }
+    );
+    const appStoreUrl = (_a = links.find((a) => /app store/i.test(a.textContent))) == null ? void 0 : _a.href;
+    const googlePlayUrl = (_b = links.find((a) => /google play/i.test(a.textContent))) == null ? void 0 : _b.href;
+    if (!isRealUrl(appStoreUrl) && !isRealUrl(googlePlayUrl)) return [];
+    const entity = {
+      "@type": "SoftwareApplication",
+      name: "Overflo",
+      applicationCategory: "FinanceApplication",
+      operatingSystem: isRealUrl(appStoreUrl) && isRealUrl(googlePlayUrl) ? "iOS, Android" : isRealUrl(appStoreUrl) ? "iOS" : "Android"
+    };
+    if (typeof APP_RATING.ratingValue === "number" && typeof APP_RATING.ratingCount === "number" && APP_RATING.ratingCount > 0) {
+      entity.aggregateRating = {
+        "@type": "AggregateRating",
+        ratingValue: String(APP_RATING.ratingValue),
+        ratingCount: String(APP_RATING.ratingCount)
+      };
+    }
+    return [entity];
+  }
+  function buildProductSchema() {
+    return [
+      {
+        "@type": "Service",
+        name: "Overflo",
+        serviceType: "Investment management",
+        description: "Overflo is a guided investment companion combining long-term wealth building with short-term flexibility, helping you invest confidently through a managed dual strategy.",
+        provider: ORG_REF,
+        areaServed: "GB",
+        url: "https://www.overflo.com/product"
+      }
+    ];
+  }
+  function buildPricingSchema(root) {
+    const service = {
+      "@type": "Service",
+      name: "Overflo",
+      serviceType: "Investment management",
+      description: "Simple, transparent pricing for guided investing with Overflo \u2014 no hidden fees, no unnecessary complexity.",
+      provider: ORG_REF,
+      url: "https://www.overflo.com/pricing"
+    };
+    const offers = Array.from(root.querySelectorAll(".showcase-box-item")).map((item) => {
+      var _a, _b, _c, _d;
+      const label = ((_b = (_a = item.querySelector("div")) == null ? void 0 : _a.textContent) == null ? void 0 : _b.trim()) || "";
+      const amountText = (_d = (_c = item.querySelector(".text-xl")) == null ? void 0 : _c.textContent) == null ? void 0 : _d.trim();
+      if (!amountText) return null;
+      return {
+        "@type": "Offer",
+        name: label,
+        price: amountText.replace(/[£$€,\s]/g, ""),
+        priceCurrency: "GBP"
+      };
+    }).filter(Boolean);
+    if (offers.length) service.offers = offers;
+    const entities = [service];
+    const faqEntities = getFaqEntities(root, ".quick-answer");
+    if (faqEntities.length) {
+      entities.push({ "@type": "FAQPage", mainEntity: faqEntities });
+    }
+    return entities;
+  }
+  function buildPartnerSchema(root) {
+    const aboutPage = {
+      "@type": "AboutPage",
+      name: "Overflo Partners \u2014 Trusted infrastructure",
+      description: "How Overflo keeps your investments secure through regulated brokerage, custodial, and infrastructure partners.",
+      about: ORG_REF,
+      url: "https://www.overflo.com/partner"
+    };
+    const partnerNames = Array.from(
+      root.querySelectorAll('.social-proof-slider:not([aria-hidden="true"]) .social-proof-logo')
+    ).map((el) => {
+      var _a, _b;
+      return (_b = (_a = el.querySelector(".text-center")) == null ? void 0 : _a.textContent) == null ? void 0 : _b.trim();
+    }).filter(Boolean);
+    const uniqueNames = [...new Set(partnerNames)];
+    const entities = [aboutPage];
+    if (uniqueNames.length >= 2) {
+      entities.push({
+        "@type": "ItemList",
+        name: "Overflo infrastructure partners",
+        itemListElement: uniqueNames.map((name, index) => ({
+          "@type": "ListItem",
+          position: index + 1,
+          name
+        }))
+      });
+    }
+    return entities;
+  }
+  function buildBlogListSchema(root) {
+    const blog = {
+      "@type": "Blog",
+      name: "Overflo Blog & Resources",
+      url: "https://www.overflo.com/ressources"
+    };
+    const seenUrls = /* @__PURE__ */ new Set();
+    const posts = Array.from(root.querySelectorAll(".blog-card")).map((card) => {
+      var _a, _b, _c, _d;
+      const url = card.href;
+      if (!url || seenUrls.has(url)) return null;
+      const headline = (_b = (_a = card.querySelector(".blog-card-title")) == null ? void 0 : _a.textContent) == null ? void 0 : _b.trim();
+      if (!headline) return null;
+      const image = (_c = card.querySelector(".blog-card-banner")) == null ? void 0 : _c.src;
+      const dateText = (_d = card.querySelector(".blog-card-content--top > div:not(.label)")) == null ? void 0 : _d.textContent;
+      const datePublished = parseDmyDate(dateText);
+      seenUrls.add(url);
+      const post = { "@type": "BlogPosting", headline, url };
+      if (image) post.image = image;
+      if (datePublished) post.datePublished = datePublished;
+      return post;
+    }).filter(Boolean);
+    if (posts.length) blog.blogPost = posts;
+    return [blog];
+  }
+  function buildArticleSchema(root) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    const headline = (_b = (_a = root.querySelector("#article-title")) == null ? void 0 : _a.textContent) == null ? void 0 : _b.trim();
+    if (!headline) return [];
+    const image = (_c = root.querySelector(".article-header-image")) == null ? void 0 : _c.src;
+    const dateText = (_d = root.querySelector(".article-infos > div:not(.label-link)")) == null ? void 0 : _d.textContent;
+    const datePublished = parseDmyDate(dateText);
+    const authorName = (_f = (_e = root.querySelector(".user-card-title")) == null ? void 0 : _e.textContent) == null ? void 0 : _f.trim();
+    const description = (_h = (_g = root.querySelector(".article-header .text-center:not(.header-title)")) == null ? void 0 : _g.textContent) == null ? void 0 : _h.trim();
+    const post = {
+      "@type": "BlogPosting",
+      headline,
+      url: window.location.href,
+      mainEntityOfPage: window.location.href
+    };
+    if (image) post.image = image;
+    if (datePublished) post.datePublished = datePublished;
+    if (description) post.description = description;
+    if (authorName) post.author = { "@type": "Person", name: authorName };
+    const entities = [post];
+    const breadcrumbItems = getBreadcrumbEntities(root);
+    if (breadcrumbItems.length) {
+      entities.push({ "@type": "BreadcrumbList", itemListElement: breadcrumbItems });
+    }
+    return entities;
+  }
+  function buildHelpListSchema() {
+    return [];
+  }
+  function buildHelpDetailSchema(root) {
+    const entities = [];
+    const faqEntities = getFaqEntities(root);
+    if (faqEntities.length) {
+      entities.push({ "@type": "FAQPage", mainEntity: faqEntities });
+    }
+    const breadcrumbItems = getBreadcrumbEntities(root);
+    if (breadcrumbItems.length) {
+      entities.push({ "@type": "BreadcrumbList", itemListElement: breadcrumbItems });
+    }
+    return entities;
+  }
+
+  // src/schema/registry.js
+  var PAGE_BUILDERS = [
+    { test: (root) => hasBarbaNamespace(root, "Product"), build: buildProductSchema },
+    { test: (root) => hasBarbaNamespace(root, "Pricing"), build: buildPricingSchema },
+    { test: (root) => hasBarbaNamespace(root, "Partner"), build: buildPartnerSchema },
+    { test: (root) => hasBarbaNamespace(root, "Ressources"), build: buildBlogListSchema },
+    { test: () => pathnameStartsWith("/blogs/"), build: buildArticleSchema },
+    { test: (root) => hasBarbaNamespace(root, "Help"), build: buildHelpListSchema },
+    { test: () => pathnameStartsWith("/helps/"), build: buildHelpDetailSchema }
+  ];
+
+  // src/schema/index.js
+  function runSchema(root = document) {
+    var _a, _b;
+    const graph = [
+      ...buildSoftwareAppSchema(root),
+      ...(_b = (_a = PAGE_BUILDERS.find((entry) => entry.test(root))) == null ? void 0 : _a.build(root)) != null ? _b : []
+    ];
+    injectGraph(graph);
   }
 
   // src/logo-marquee.js
@@ -687,6 +1213,7 @@
       wrapper.appendChild(track);
       track.appendChild(originalList);
     }
+    originalList.removeAttribute("aria-hidden");
     function ensureEnoughWidth() {
       if (getReduced()) {
         Array.from(track.querySelectorAll(".social-proof-slider")).forEach((el, i) => {
@@ -703,7 +1230,9 @@
       if (!cycleWidth) return;
       let guard = 0;
       while (track.scrollWidth < viewportWidth * 2 && guard < 30) {
-        track.appendChild(originalList.cloneNode(true));
+        const clone = originalList.cloneNode(true);
+        clone.setAttribute("aria-hidden", "true");
+        track.appendChild(clone);
         guard++;
       }
       const duration = cycleWidth / SPEED_PX_PER_SEC;
@@ -725,41 +1254,141 @@
     onMotionPreferenceChange(ensureEnoughWidth);
   }
   function initLogoMarquee(root = document) {
+    var _a;
     let reduced = prefersReducedMotion();
     onMotionPreferenceChange((value) => {
       reduced = value;
     });
-    root.querySelectorAll(".social-proof-slider--wrapper").forEach((wrapper, index) => initRow(wrapper, index, () => reduced));
+    const wrappers = root.querySelectorAll(".social-proof-slider--wrapper");
+    const region = (_a = wrappers[0]) == null ? void 0 : _a.closest(".social-proof--right");
+    if (region && !region.hasAttribute("aria-label")) {
+      region.setAttribute("role", "region");
+      region.setAttribute("aria-label", "Partner logos");
+    }
+    wrappers.forEach((wrapper, index) => initRow(wrapper, index, () => reduced));
   }
 
   // src/testimonials.js
+  var idCounter2 = 0;
+  function nextId2(prefix) {
+    idCounter2 += 1;
+    return `${prefix}-${idCounter2}`;
+  }
   function initTestimonials(root = document) {
     const items = root.querySelectorAll(".testimonials-item[data-testimonials]");
     const buttons = root.querySelectorAll(".testimonials-menu-button[data-testimonials]");
     if (!items.length || !buttons.length) return;
-    function showTestimonial(key) {
-      items.forEach((item) => {
-        item.style.display = item.dataset.testimonials === key ? "flex" : "none";
-      });
-      buttons.forEach((btn) => {
-        btn.classList.toggle("is-active", btn.dataset.testimonials === key);
+    const menuList = root.querySelector(".testimonials-menu-list");
+    if (menuList) {
+      menuList.setAttribute("role", "tablist");
+      menuList.setAttribute("aria-label", "Partner testimonials");
+    }
+    const pairs = Array.from(buttons).map((btn) => {
+      var _a, _b, _c;
+      const key = btn.dataset.testimonials;
+      const item = Array.from(items).find((it) => it.dataset.testimonials === key);
+      if (!item) return null;
+      const tabId = btn.id || nextId2("testimonial-tab");
+      const panelId = item.id || nextId2("testimonial-panel");
+      btn.id = tabId;
+      item.id = panelId;
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-controls", panelId);
+      item.setAttribute("role", "tabpanel");
+      item.setAttribute("aria-labelledby", tabId);
+      const companyName = ((_c = (_b = (_a = item.querySelector(".testimonials-item-footer-row")) == null ? void 0 : _a.lastElementChild) == null ? void 0 : _b.textContent) == null ? void 0 : _c.trim()) || key;
+      if (!btn.getAttribute("aria-label")) {
+        btn.setAttribute("aria-label", `View testimonial from ${companyName}`);
+      }
+      return { key, btn, item };
+    }).filter(Boolean);
+    function showTestimonial(key, { moveFocus = false } = {}) {
+      pairs.forEach(({ key: itemKey, btn, item }) => {
+        const isActive = itemKey === key;
+        item.style.display = isActive ? "flex" : "none";
+        item.setAttribute("aria-hidden", isActive ? "false" : "true");
+        btn.classList.toggle("is-active", isActive);
+        btn.setAttribute("aria-selected", isActive ? "true" : "false");
+        btn.tabIndex = isActive ? 0 : -1;
+        if (isActive && moveFocus) btn.focus();
       });
     }
-    buttons.forEach((btn) => {
+    pairs.forEach(({ key, btn }) => {
       btn.addEventListener("click", (e) => {
         e.preventDefault();
-        showTestimonial(btn.dataset.testimonials);
+        showTestimonial(key);
       });
     });
+    if (menuList) {
+      menuList.addEventListener("keydown", (e) => {
+        const currentIndex = pairs.findIndex(({ btn }) => btn === document.activeElement);
+        if (currentIndex === -1) return;
+        let nextIndex = null;
+        if (e.key === "ArrowRight") nextIndex = (currentIndex + 1) % pairs.length;
+        else if (e.key === "ArrowLeft") nextIndex = (currentIndex - 1 + pairs.length) % pairs.length;
+        else if (e.key === "Home") nextIndex = 0;
+        else if (e.key === "End") nextIndex = pairs.length - 1;
+        if (nextIndex === null) return;
+        e.preventDefault();
+        showTestimonial(pairs[nextIndex].key, { moveFocus: true });
+      });
+    }
     const firstItem = items[0];
     if (firstItem) {
-      buttons.forEach((btn) => {
-        btn.classList.toggle("is-active", btn.dataset.testimonials === firstItem.dataset.testimonials);
-      });
+      showTestimonial(firstItem.dataset.testimonials);
     }
   }
 
   // src/large-quote.js
+  var MOBILE_BREAKPOINT = 767;
+  var MOBILE_SMOOTH_EASE = 0.15;
+  function splitIntoWordTokens(html) {
+    const withMarkers = html.replace(/<br\s*\/?>/gi, " \n ");
+    const div = document.createElement("div");
+    div.innerHTML = withMarkers;
+    const text = div.textContent || "";
+    return text.split(/\s+/).filter(Boolean);
+  }
+  function detectVisualLines(measureEl, tokens) {
+    measureEl.innerHTML = "";
+    const wordEls = [];
+    tokens.forEach((token) => {
+      if (token === "\n") {
+        wordEls.push({ forcedBreak: true });
+        return;
+      }
+      const span = document.createElement("span");
+      span.className = "large-quote-word";
+      span.textContent = token;
+      measureEl.appendChild(span);
+      measureEl.appendChild(document.createTextNode(" "));
+      wordEls.push({ el: span, forcedBreak: false });
+    });
+    const lines = [];
+    let currentWords = [];
+    let currentTop = null;
+    let forceBreak = false;
+    wordEls.forEach((w) => {
+      if (w.forcedBreak) {
+        forceBreak = true;
+        return;
+      }
+      const top = w.el.offsetTop;
+      if (currentTop === null) {
+        currentTop = top;
+        currentWords.push(w.el.textContent);
+      } else if (top !== currentTop || forceBreak) {
+        lines.push(currentWords.join(" "));
+        currentWords = [w.el.textContent];
+        currentTop = top;
+        forceBreak = false;
+      } else {
+        currentWords.push(w.el.textContent);
+      }
+    });
+    if (currentWords.length) lines.push(currentWords.join(" "));
+    return lines;
+  }
   function initLargeQuoteReveal(root = document) {
     if (typeof ScrollTrigger === "undefined") return;
     const section = root.querySelector(".large-quote");
@@ -767,33 +1396,48 @@
     if (!section || !textEl) return;
     if (textEl.dataset.revealInit) return;
     textEl.dataset.revealInit = "1";
-    const lineStrings = textEl.innerHTML.split(/<br\s*\/?>/i).map((s) => s.trim()).filter(Boolean);
-    textEl.innerHTML = "";
+    const originalHTML = textEl.innerHTML;
+    const tokens = splitIntoWordTokens(originalHTML);
     textEl.classList.add("large-quote-text-lines");
-    const overlays = lineStrings.map((lineHTML) => {
-      const lineWrap = document.createElement("div");
-      lineWrap.className = "large-quote-line-wrap";
-      const base = document.createElement("div");
-      base.className = "large-quote-text-base";
-      base.innerHTML = lineHTML;
-      const overlay = document.createElement("div");
-      overlay.className = "large-quote-text-reveal";
-      overlay.setAttribute("aria-hidden", "true");
-      overlay.innerHTML = lineHTML;
-      lineWrap.appendChild(base);
-      lineWrap.appendChild(overlay);
-      textEl.appendChild(lineWrap);
-      return overlay;
-    });
-    const total = overlays.length;
-    if (!total) return;
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
     let st = null;
+    let overlays = [];
+    let total = 0;
+    function updateOverlays(progress) {
+      overlays.forEach((overlay, index) => {
+        const segmentStart = index / total;
+        const segmentEnd = (index + 1) / total;
+        const raw = (progress - segmentStart) / (segmentEnd - segmentStart);
+        const lineProgress = Math.min(1, Math.max(0, raw));
+        overlay.style.setProperty("--reveal", `${lineProgress * 100}%`);
+      });
+    }
     function applyStaticState() {
       overlays.forEach((overlay) => {
         overlay.style.setProperty("--reveal", "100%");
       });
     }
-    function createScrollAnimation() {
+    function rebuildLines() {
+      const lineStrings = detectVisualLines(textEl, tokens);
+      textEl.innerHTML = "";
+      overlays = lineStrings.map((line) => {
+        const lineWrap = document.createElement("div");
+        lineWrap.className = "large-quote-line-wrap";
+        const base = document.createElement("div");
+        base.className = "large-quote-text-base";
+        base.textContent = line;
+        const overlay = document.createElement("div");
+        overlay.className = "large-quote-text-reveal";
+        overlay.setAttribute("aria-hidden", "true");
+        overlay.textContent = line;
+        lineWrap.appendChild(base);
+        lineWrap.appendChild(overlay);
+        textEl.appendChild(lineWrap);
+        return overlay;
+      });
+      total = overlays.length;
+    }
+    function createPinnedScrollAnimation() {
       return ScrollTrigger.create({
         id: "large-quote-reveal",
         trigger: section,
@@ -805,35 +1449,76 @@
         scrub: 0.5,
         anticipatePin: 1,
         invalidateOnRefresh: true,
-        onUpdate: (self) => {
-          overlays.forEach((overlay, index) => {
-            const segmentStart = index / total;
-            const segmentEnd = (index + 1) / total;
-            const raw = (self.progress - segmentStart) / (segmentEnd - segmentStart);
-            const lineProgress = Math.min(1, Math.max(0, raw));
-            overlay.style.setProperty("--reveal", `${lineProgress * 100}%`);
-          });
-        }
+        onUpdate: (self) => updateOverlays(self.progress)
       });
     }
-    function setup(reduced) {
+    function createUnpinnedScrollAnimation() {
+      let targetProgress = 0;
+      let currentProgress = 0;
+      let rafId = null;
+      function tick() {
+        currentProgress += (targetProgress - currentProgress) * MOBILE_SMOOTH_EASE;
+        updateOverlays(currentProgress);
+        rafId = requestAnimationFrame(tick);
+      }
+      rafId = requestAnimationFrame(tick);
+      const trigger = ScrollTrigger.create({
+        id: "large-quote-reveal-mobile",
+        trigger: section,
+        start: "top bottom",
+        end: "bottom bottom",
+        invalidateOnRefresh: true,
+        onUpdate: (self) => {
+          targetProgress = self.progress;
+        },
+        onKill: () => {
+          if (rafId) cancelAnimationFrame(rafId);
+        }
+      });
+      return trigger;
+    }
+    function setup() {
       if (st) {
         st.kill();
         st = null;
       }
-      if (reduced) {
+      if (!total) return;
+      if (prefersReducedMotion()) {
         applyStaticState();
+      } else if (mobileMq.matches) {
+        st = createUnpinnedScrollAnimation();
+        ScrollTrigger.refresh();
       } else {
-        st = createScrollAnimation();
+        st = createPinnedScrollAnimation();
         ScrollTrigger.refresh();
       }
     }
-    setup(prefersReducedMotion());
+    rebuildLines();
+    setup();
     onMotionPreferenceChange(setup);
+    mobileMq.addEventListener("change", () => {
+      if (!document.body.contains(section)) return;
+      setup();
+    });
+    let resizeTimer;
+    let lastWidth = window.innerWidth;
+    window.addEventListener("resize", () => {
+      if (window.innerWidth === lastWidth) return;
+      lastWidth = window.innerWidth;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (!document.body.contains(section)) return;
+        rebuildLines();
+        setup();
+      }, 150);
+    });
     return st;
   }
 
   // src/why-cards-converge.js
+  var MOBILE_BREAKPOINT2 = 767;
+  var MOBILE_CARD_SCALE = 0.6;
+  var MOBILE_ENTER_DURATION = 1.2;
   function randomBetween(min, max) {
     return min + Math.random() * (max - min);
   }
@@ -866,6 +1551,7 @@
     if (!section || !items.length) return;
     if (section.dataset.convergeInit) return;
     section.dataset.convergeInit = "1";
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT2}px)`);
     let st = null;
     function applyStaticState() {
       items.forEach((item) => {
@@ -873,11 +1559,10 @@
         item.style.setProperty("opacity", "1", "important");
       });
     }
-    function createScrollAnimation() {
+    function buildCardsAndUpdater(scale) {
       const total = items.length;
-      const sectionRect = section.getBoundingClientRect();
-      const halfW = sectionRect.width / 2;
-      const halfH = sectionRect.height / 2;
+      const halfW = window.innerWidth / 2;
+      const halfH = window.innerHeight / 2;
       const VISIBLE_MARGIN = 90;
       const CUT_MARGIN = 60;
       const MIN_ROTATE = -18;
@@ -899,10 +1584,26 @@
         const x = dx * t;
         const y = dy * t;
         const rotate = randomBetween(MIN_ROTATE, MAX_ROTATE);
-        item.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px) rotate(${rotate}deg)`;
+        item.style.transform = `translate(-50%, -50%) scale(${scale}) translate(${x}px, ${y}px) rotate(${rotate}deg)`;
         item.style.opacity = "1";
         return { item, x, y, rotate };
       });
+      function updateCards(progress) {
+        const eased = 1 - Math.pow(1 - progress, 3);
+        cards.forEach((card) => {
+          const currentX = card.x * (1 - eased);
+          const currentY = card.y * (1 - eased);
+          const currentRotate = card.rotate * (1 - eased);
+          card.item.style.transform = `translate(-50%, -50%) scale(${scale}) translate(${currentX}px, ${currentY}px) rotate(${currentRotate}deg)`;
+          const fadeStart = 0.45;
+          const fadeProgress = Math.max(0, (eased - fadeStart) / (1 - fadeStart));
+          card.item.style.setProperty("opacity", `${1 - fadeProgress}`, "important");
+        });
+      }
+      return updateCards;
+    }
+    function createPinnedScrollAnimation() {
+      const updateCards = buildCardsAndUpdater(1);
       return ScrollTrigger.create({
         id: "why-cards-converge",
         trigger: section,
@@ -914,39 +1615,53 @@
         scrub: 0.5,
         anticipatePin: 1,
         invalidateOnRefresh: true,
-        onUpdate: (self) => {
-          const progress = self.progress;
-          const eased = 1 - Math.pow(1 - progress, 3);
-          cards.forEach((card) => {
-            const currentX = card.x * (1 - eased);
-            const currentY = card.y * (1 - eased);
-            const currentRotate = card.rotate * (1 - eased);
-            card.item.style.transform = `translate(-50%, -50%) translate(${currentX}px, ${currentY}px) rotate(${currentRotate}deg)`;
-            const fadeStart = 0.45;
-            const fadeProgress = Math.max(0, (eased - fadeStart) / (1 - fadeStart));
-            card.item.style.setProperty("opacity", `${1 - fadeProgress}`, "important");
+        onUpdate: (self) => updateCards(self.progress)
+      });
+    }
+    function createMobileEnterAnimation() {
+      const updateCards = buildCardsAndUpdater(MOBILE_CARD_SCALE);
+      updateCards(0);
+      const state = { progress: 0 };
+      return ScrollTrigger.create({
+        id: "why-cards-converge-mobile-enter",
+        trigger: section,
+        start: "top top",
+        once: true,
+        onEnter: () => {
+          gsap.to(state, {
+            progress: 1,
+            duration: MOBILE_ENTER_DURATION,
+            ease: "power2.out",
+            onUpdate: () => updateCards(state.progress)
           });
         }
       });
     }
-    function setup(reduced) {
+    function setup() {
       if (st) {
         st.kill();
         st = null;
       }
-      if (reduced) {
+      if (prefersReducedMotion()) {
         applyStaticState();
+      } else if (mobileMq.matches) {
+        st = createMobileEnterAnimation();
       } else {
-        st = createScrollAnimation();
+        st = createPinnedScrollAnimation();
         ScrollTrigger.refresh();
       }
     }
-    setup(prefersReducedMotion());
+    setup();
     onMotionPreferenceChange(setup);
+    mobileMq.addEventListener("change", () => {
+      if (!document.body.contains(section)) return;
+      setup();
+    });
     return st;
   }
 
   // src/how-horizontal-scroll.js
+  var MOBILE_BREAKPOINT3 = 767;
   function initHowHorizontalScroll(root = document) {
     if (typeof ScrollTrigger === "undefined") return;
     const section = root.querySelector(".how");
@@ -954,10 +1669,11 @@
     if (!section || !track) return;
     if (section.dataset.horizontalInit) return;
     section.dataset.horizontalInit = "1";
+    const list = track.querySelector(".how-list");
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT3}px)`);
     let st = null;
     const getScrollDistance = () => {
       const rawDistance = track.scrollWidth - section.clientWidth;
-      const list = track.querySelector(".how-list");
       const lastItem = list ? list.lastElementChild : null;
       const lastItemWidth = lastItem ? lastItem.getBoundingClientRect().width : 0;
       const CENTER_RATIO = 0.6;
@@ -966,17 +1682,26 @@
     };
     function applyStaticState() {
       track.style.transform = "none";
-      section.style.overflowX = "auto";
-      section.style.webkitOverflowScrolling = "touch";
-      section.setAttribute("tabindex", "0");
-      section.setAttribute("role", "region");
-      section.setAttribute("aria-label", "How Overflo works, scrollable steps");
-    }
-    function createScrollAnimation() {
-      section.style.overflowX = "hidden";
+      section.style.overflowX = "";
       section.removeAttribute("tabindex");
       section.removeAttribute("role");
       section.removeAttribute("aria-label");
+      if (!list) return;
+      list.style.overflowX = "auto";
+      list.style.webkitOverflowScrolling = "touch";
+      list.setAttribute("tabindex", "0");
+      list.setAttribute("role", "region");
+      list.setAttribute("aria-label", "How Overflo works, scrollable steps");
+    }
+    function createScrollAnimation() {
+      section.style.overflowX = "hidden";
+      if (list) {
+        list.style.overflowX = "";
+        list.style.webkitOverflowScrolling = "";
+        list.removeAttribute("tabindex");
+        list.removeAttribute("role");
+        list.removeAttribute("aria-label");
+      }
       return ScrollTrigger.create({
         id: "how-horizontal-scroll",
         trigger: section,
@@ -995,20 +1720,27 @@
         }
       });
     }
-    function setup(reduced) {
+    function shouldUseStatic() {
+      return prefersReducedMotion() || mobileMq.matches;
+    }
+    function setup() {
       if (st) {
         st.kill();
         st = null;
       }
-      if (reduced) {
+      if (shouldUseStatic()) {
         applyStaticState();
       } else {
         st = createScrollAnimation();
         ScrollTrigger.refresh();
       }
     }
-    setup(prefersReducedMotion());
+    setup();
     onMotionPreferenceChange(setup);
+    mobileMq.addEventListener("change", () => {
+      if (!document.body.contains(section)) return;
+      setup();
+    });
     return st;
   }
 
@@ -1168,6 +1900,9 @@
   }
 
   // src/slider-testimonials.js
+  var MOBILE_BREAKPOINT4 = 767;
+  var DRAG_COMMIT_THRESHOLD = 60;
+  var DRAG_DIRECTION_LOCK = 10;
   function initSliderTestimonials(root = document) {
     const section = root.querySelector(".slider");
     if (!section) return;
@@ -1177,12 +1912,16 @@
     if (section.dataset.sliderInit) return;
     section.dataset.sliderInit = "1";
     const dotsWrapper = section.querySelector(".slider-dots");
-    const [prevBtn, nextBtn] = section.querySelectorAll(".slider-header .row .icon-button");
+    const [prevBtn, nextBtn] = section.querySelectorAll(
+      ".slider-header .row .icon-button"
+    );
+    const dragArea = section.querySelector(".slider-box") || track;
     let activeIndex = 0;
     const total = items.length;
-    const cardWidth = items[0].getBoundingClientRect().width || 224;
-    const spacing = cardWidth * 0.28;
+    let cardWidth = items[0].getBoundingClientRect().width || 224;
+    let spacing = cardWidth * 0.28;
     const DOT_SPACING2 = 14;
+    const lastDistance = /* @__PURE__ */ new WeakMap();
     let reduced = prefersReducedMotion();
     let DURATION = reduced ? 0 : 0.6;
     let EASE = reduced ? "none" : "power3.out";
@@ -1191,6 +1930,37 @@
       DURATION = reduced ? 0 : 0.6;
       EASE = reduced ? "none" : "power3.out";
     });
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT4}px)`);
+    const heading = section.querySelector("h2");
+    if (heading) {
+      if (!heading.id) heading.id = "slider-testimonials-heading";
+      section.setAttribute("aria-labelledby", heading.id);
+    }
+    section.setAttribute("role", "region");
+    section.setAttribute("aria-roledescription", "carrousel");
+    if (track) {
+      track.setAttribute("role", "list");
+    }
+    items.forEach((item) => {
+      item.setAttribute("role", "listitem");
+      item.setAttribute("aria-roledescription", "diapositive");
+    });
+    if (prevBtn) {
+      prevBtn.setAttribute("aria-label", "T\xE9moignage pr\xE9c\xE9dent");
+      prevBtn.querySelectorAll("svg").forEach((svg) => svg.setAttribute("aria-hidden", "true"));
+    }
+    if (nextBtn) {
+      nextBtn.setAttribute("aria-label", "T\xE9moignage suivant");
+      nextBtn.querySelectorAll("svg").forEach((svg) => svg.setAttribute("aria-hidden", "true"));
+    }
+    let liveRegion = section.querySelector(".slider-live-region");
+    if (!liveRegion) {
+      liveRegion = document.createElement("div");
+      liveRegion.className = "slider-live-region sr-only";
+      liveRegion.setAttribute("aria-live", "polite");
+      liveRegion.setAttribute("aria-atomic", "true");
+      section.appendChild(liveRegion);
+    }
     function circularDiff(index, active) {
       let diff = index - active;
       if (diff > total / 2) diff -= total;
@@ -1200,41 +1970,91 @@
     let dots = [];
     if (dotsWrapper) {
       dotsWrapper.innerHTML = "";
+      dotsWrapper.setAttribute("role", "tablist");
+      dotsWrapper.setAttribute("aria-label", "S\xE9lection du t\xE9moignage");
       dots = items.map((_, index) => {
-        const dot = document.createElement("div");
+        const dot = document.createElement("button");
+        dot.type = "button";
         dot.className = "slider-dot";
+        dot.setAttribute("role", "tab");
+        dot.setAttribute(
+          "aria-label",
+          `Go to testimonial ${index + 1} of ${total}`
+        );
         dot.addEventListener("click", () => goTo(index));
         dotsWrapper.appendChild(dot);
         return dot;
       });
     }
-    function render() {
+    function getFocusableChildren(item) {
+      return item.querySelectorAll("a, button, [tabindex]");
+    }
+    function render(instant = false) {
       items.forEach((item, index) => {
+        var _a;
         const diff = circularDiff(index, activeIndex);
         const distance = Math.abs(diff);
+        const previousDistance = (_a = lastDistance.get(item)) != null ? _a : distance;
+        const becomingMoreCentral = distance < previousDistance;
+        const becomingCenter = distance === 0 && previousDistance > 0;
+        lastDistance.set(item, distance);
         const x = diff * spacing;
         const scale = distance === 0 ? 1 : 0.85;
         const opacity = distance === 0 ? 1 : distance === 1 ? 0.9 : 0;
         const rotateY = distance === 0 ? 0 : diff > 0 ? -14 : 14;
         const z = distance === 0 ? 0 : -60;
+        const isVisible = distance <= 1;
+        const isActive = distance === 0;
         gsap.killTweensOf(item);
-        gsap.to(item, {
-          x,
-          xPercent: -50,
-          yPercent: -50,
-          scale,
-          opacity,
-          rotateY,
-          z,
-          duration: DURATION,
-          ease: EASE,
-          overwrite: true,
-          onStart: () => {
-            item.style.zIndex = 10 - distance;
-          }
+        if (instant) {
+          gsap.set(item, { x, xPercent: -50, yPercent: -50, y: 0, scale, opacity, rotateY, z });
+          item.style.zIndex = 10 - distance;
+        } else if (becomingCenter) {
+          const currentX = gsap.getProperty(item, "x") || 0;
+          const sideSign = currentX !== 0 ? Math.sign(currentX) : diff !== 0 ? Math.sign(diff) : 1;
+          gsap.to(item, {
+            keyframes: {
+              "40%": {
+                x: currentX + sideSign * spacing * 0.35,
+                z: 60,
+                rotateY: 0
+              },
+              "100%": { x, xPercent: -50, yPercent: -50, y: 0, scale, opacity, rotateY, z }
+            },
+            duration: DURATION,
+            ease: EASE,
+            overwrite: true,
+            onStart: () => {
+              item.style.zIndex = 10 - distance;
+            }
+          });
+        } else {
+          gsap.to(item, {
+            x,
+            xPercent: -50,
+            yPercent: -50,
+            y: 0,
+            scale,
+            opacity,
+            rotateY,
+            z,
+            duration: DURATION,
+            ease: EASE,
+            overwrite: true,
+            onStart: () => {
+              if (becomingMoreCentral) item.style.zIndex = 10 - distance;
+            },
+            onComplete: () => {
+              if (!becomingMoreCentral) item.style.zIndex = 10 - distance;
+            }
+          });
+        }
+        item.style.pointerEvents = isVisible ? "auto" : "none";
+        item.classList.toggle("is-active", isActive);
+        item.setAttribute("aria-hidden", isVisible ? "false" : "true");
+        getFocusableChildren(item).forEach((el) => {
+          el.tabIndex = isVisible ? 0 : -1;
         });
-        item.style.pointerEvents = distance <= 1 ? "auto" : "none";
-        item.classList.toggle("is-active", distance === 0);
       });
       dots.forEach((dot, index) => {
         const diff = circularDiff(index, activeIndex);
@@ -1243,18 +2063,30 @@
         const isActive = distance === 0;
         const isVisible = distance <= 1;
         gsap.killTweensOf(dot);
-        gsap.to(dot, {
-          x,
-          xPercent: -50,
-          yPercent: -50,
-          opacity: isVisible ? 1 : 0,
-          duration: DURATION,
-          ease: EASE,
-          overwrite: true
-        });
+        if (instant) {
+          gsap.set(dot, { x, xPercent: -50, yPercent: -50, opacity: isVisible ? 1 : 0 });
+        } else {
+          gsap.to(dot, {
+            x,
+            xPercent: -50,
+            yPercent: -50,
+            opacity: isVisible ? 1 : 0,
+            duration: DURATION,
+            ease: EASE,
+            overwrite: true
+          });
+        }
         dot.style.pointerEvents = isVisible ? "auto" : "none";
         dot.classList.toggle("is-active", isActive);
+        dot.setAttribute("aria-selected", isActive ? "true" : "false");
+        dot.tabIndex = isVisible ? 0 : -1;
+        if (isActive) {
+          dot.setAttribute("aria-current", "true");
+        } else {
+          dot.removeAttribute("aria-current");
+        }
       });
+      liveRegion.textContent = `T\xE9moignage ${activeIndex + 1} sur ${total}`;
     }
     function goTo(index) {
       activeIndex = (index % total + total) % total;
@@ -1273,16 +2105,95 @@
         if (index !== activeIndex) goTo(index);
       });
     });
+    section.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goTo(activeIndex - 1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goTo(activeIndex + 1);
+      }
+    });
+    let dragState = null;
+    function lockPageScroll() {
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.overflow = "hidden";
+    }
+    function unlockPageScroll() {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+    }
+    function isDragEnabled() {
+      return mobileMq.matches && !prefersReducedMotion();
+    }
+    function onPointerDown(e) {
+      if (!isDragEnabled()) return;
+      dragState = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        deltaX: 0,
+        deltaY: 0,
+        locked: null
+      };
+    }
+    function onPointerMove(e) {
+      var _a;
+      if (!dragState || e.pointerId !== dragState.pointerId) return;
+      dragState.deltaX = e.clientX - dragState.startX;
+      dragState.deltaY = e.clientY - dragState.startY;
+      if (dragState.locked === null) {
+        if (Math.abs(dragState.deltaX) > DRAG_DIRECTION_LOCK) {
+          dragState.locked = "x";
+          (_a = dragArea.setPointerCapture) == null ? void 0 : _a.call(dragArea, dragState.pointerId);
+          items.forEach((item) => gsap.killTweensOf(item));
+          lockPageScroll();
+        } else if (Math.abs(dragState.deltaY) > DRAG_DIRECTION_LOCK) {
+          dragState.locked = "y";
+          dragState = null;
+          return;
+        } else {
+          return;
+        }
+      }
+      if (dragState.locked !== "x") return;
+      e.preventDefault();
+      items.forEach((item, index) => {
+        const diff = circularDiff(index, activeIndex);
+        if (diff !== 0) return;
+        gsap.set(item, { x: dragState.deltaX, xPercent: -50, yPercent: -50 });
+      });
+    }
+    function onPointerUp(e) {
+      if (!dragState || e.pointerId !== dragState.pointerId) return;
+      const { deltaX, locked } = dragState;
+      dragState = null;
+      if (locked === "x") unlockPageScroll();
+      if (locked !== "x") return;
+      if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD) {
+        goTo(deltaX < 0 ? activeIndex + 1 : activeIndex - 1);
+      } else {
+        render();
+      }
+    }
+    dragArea.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     let resizeTimer;
+    let lastWidth = window.innerWidth;
     window.addEventListener("resize", () => {
+      if (window.innerWidth === lastWidth) return;
+      lastWidth = window.innerWidth;
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        gsap.set(items, { clearProps: "transform" });
-        render();
+        cardWidth = items[0].getBoundingClientRect().width || cardWidth;
+        spacing = cardWidth * 0.28;
+        render(true);
       }, 150);
     });
-    gsap.set(items, { x: 0, xPercent: -50, yPercent: -50 });
-    render();
+    gsap.set(items, { x: 0, xPercent: -50, yPercent: -50, y: 0 });
+    render(true);
   }
 
   // src/duo-slider.js
@@ -1290,7 +2201,16 @@
   var DEPTH_SCALE = [1, 0.9, 0.78];
   var DEPTH_BG = ["#ffffff", "#f4f4f4", "#ededed"];
   var DOT_SPACING = 14;
+  var MOBILE_BREAKPOINT5 = 767;
+  var THROW_DISTANCE = 600;
+  var THROW_ROTATION = 14;
+  var THROW_ROTATE_Y = 35;
+  var THROW_LIFT = 90;
+  var DRAG_COMMIT_THRESHOLD2 = 70;
+  var DRAG_DIRECTION_LOCK2 = 10;
+  var DRAG_ROTATION_FACTOR = 0.04;
   function initDuoSlider(root = document) {
+    var _a;
     const section = root.querySelector(".duo-slider");
     if (!section) return;
     const list = section.querySelector(".duo-slider-list");
@@ -1304,24 +2224,69 @@
     let activeIndex = 0;
     let isAnimating = false;
     let pendingIndex = null;
+    let lastThrowSide = 1;
     let reduced = prefersReducedMotion();
-    let DURATION = reduced ? 0 : 0.5;
+    let DURATION = reduced ? 0 : 0.6;
     let EASE = reduced ? "none" : "power3.inOut";
     onMotionPreferenceChange((value) => {
       reduced = value;
-      DURATION = reduced ? 0 : 0.5;
+      DURATION = reduced ? 0 : 0.6;
       EASE = reduced ? "none" : "power3.inOut";
     });
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT5}px)`);
     const cards = items.map((item) => ({
       item,
-      card: item.querySelector(".logo-card") || item
+      card: item.querySelector(".logo-card") || item,
+      wasActive: item.classList.contains("is-active")
     }));
+    const heading = (_a = section.closest(".duo")) == null ? void 0 : _a.querySelector(".duo-header--title");
+    if (heading) {
+      if (!heading.id) heading.id = "duo-slider-heading";
+      section.setAttribute("aria-labelledby", heading.id);
+    }
+    section.setAttribute("role", "region");
+    section.setAttribute("aria-roledescription", "carrousel");
+    list.setAttribute("role", "list");
+    items.forEach((item) => {
+      item.setAttribute("role", "listitem");
+      item.setAttribute("aria-roledescription", "diapositive");
+    });
+    if (prevBtn) {
+      prevBtn.setAttribute("aria-label", "Partenaire pr\xE9c\xE9dent");
+      prevBtn.querySelectorAll("svg").forEach((svg) => svg.setAttribute("aria-hidden", "true"));
+    }
+    if (nextBtn) {
+      nextBtn.setAttribute("aria-label", "Partenaire suivant");
+      nextBtn.querySelectorAll("svg").forEach((svg) => svg.setAttribute("aria-hidden", "true"));
+    }
+    let liveRegion = section.querySelector(".duo-slider-live-region");
+    if (!liveRegion) {
+      liveRegion = document.createElement("div");
+      liveRegion.className = "duo-slider-live-region sr-only";
+      liveRegion.setAttribute("aria-live", "polite");
+      liveRegion.setAttribute("aria-atomic", "true");
+      section.appendChild(liveRegion);
+    }
+    function getFocusableChildren(item) {
+      return item.querySelectorAll("a, button, [tabindex]");
+    }
+    function announceActiveItem() {
+      var _a2, _b;
+      const activeItem = items[activeIndex];
+      const label = ((_b = (_a2 = activeItem == null ? void 0 : activeItem.querySelector(".logo-card--title")) == null ? void 0 : _a2.textContent) == null ? void 0 : _b.trim()) || `partenaire ${activeIndex + 1}`;
+      liveRegion.textContent = `${label}, ${activeIndex + 1} sur ${total}`;
+    }
     let dots = [];
     if (dotsWrapper) {
       dotsWrapper.innerHTML = "";
+      dotsWrapper.setAttribute("role", "tablist");
+      dotsWrapper.setAttribute("aria-label", "S\xE9lection du partenaire");
       dots = items.map((_, index) => {
-        const dot = document.createElement("div");
+        const dot = document.createElement("button");
+        dot.type = "button";
         dot.className = "duo-slider-dot";
+        dot.setAttribute("role", "tab");
+        dot.setAttribute("aria-label", `Aller au partenaire ${index + 1} sur ${total}`);
         dot.addEventListener("click", () => goTo(index));
         dotsWrapper.appendChild(dot);
         return dot;
@@ -1352,6 +2317,13 @@
         });
         dot.style.pointerEvents = isVisible ? "auto" : "none";
         dot.classList.toggle("is-active", isActive);
+        dot.setAttribute("aria-selected", isActive ? "true" : "false");
+        dot.tabIndex = isVisible ? 0 : -1;
+        if (isActive) {
+          dot.setAttribute("aria-current", "true");
+        } else {
+          dot.removeAttribute("aria-current");
+        }
       });
     }
     function setupLayout() {
@@ -1377,7 +2349,7 @@
         zIndex: total - n
       };
     }
-    function render(animate = true) {
+    function render(animate = true, direction = 1, throwSide = 1) {
       if (animate) isAnimating = true;
       let completed = 0;
       function onOneComplete() {
@@ -1391,36 +2363,133 @@
           }
         }
       }
-      cards.forEach(({ item, card }, index) => {
+      cards.forEach((entry) => {
+        const { item, card } = entry;
+        const index = items.indexOf(item);
         const diff = circularDiff(index, activeIndex, total);
         const forwardDist = diff < 0 ? total + diff : diff;
         const target = styleForDepth(forwardDist);
         const isActive = forwardDist === 0;
+        const isVisible = forwardDist <= 2;
+        const isBeingThrown = direction >= 0 && entry.wasActive && !isActive;
+        const isBecomingActive = direction < 0 && isActive && !entry.wasActive;
+        entry.wasActive = isActive;
         item.classList.toggle("is-active", isActive);
-        item.style.pointerEvents = forwardDist <= 2 ? "auto" : "none";
-        item.style.zIndex = target.zIndex;
+        item.style.pointerEvents = isVisible ? "auto" : "none";
+        item.style.zIndex = isBeingThrown || isBecomingActive ? total + 1 : target.zIndex;
+        item.setAttribute("aria-hidden", isVisible ? "false" : "true");
+        getFocusableChildren(item).forEach((el) => {
+          el.tabIndex = isVisible ? 0 : -1;
+        });
         gsap.killTweensOf(item);
         gsap.killTweensOf(card);
         if (!animate) {
           gsap.set(item, {
             top: target.top,
+            x: 0,
             xPercent: -50,
+            rotate: 0,
             scale: target.scale,
             opacity: target.opacity
           });
           gsap.set(card, { backgroundColor: target.background });
+          entry.wasActive = isActive;
           return;
         }
-        gsap.to(item, {
-          top: target.top,
-          xPercent: -50,
-          scale: target.scale,
-          opacity: target.opacity,
-          duration: DURATION,
-          ease: EASE,
-          overwrite: true,
-          onComplete: onOneComplete
-        });
+        if (isBeingThrown) {
+          const throwX = THROW_DISTANCE * throwSide;
+          const throwRotate = THROW_ROTATION * throwSide;
+          const throwRotateY = THROW_ROTATE_Y * throwSide;
+          lastThrowSide = throwSide;
+          gsap.to(item, {
+            keyframes: {
+              "60%": {
+                x: throwX * 0.6,
+                y: -THROW_LIFT,
+                rotate: throwRotate * 0.6,
+                rotateY: throwRotateY * 0.6,
+                scale: 1.05,
+                ease: "power1.out"
+              },
+              "100%": {
+                x: throwX,
+                y: THROW_LIFT * 0.3,
+                rotate: throwRotate,
+                rotateY: throwRotateY,
+                scale: 1.02,
+                ease: "power1.in"
+              }
+            },
+            duration: DURATION,
+            overwrite: true,
+            onComplete: () => {
+              gsap.set(item, {
+                top: target.top,
+                x: 0,
+                xPercent: -50,
+                y: 0,
+                rotate: 0,
+                rotateY: 0,
+                scale: target.scale,
+                opacity: target.opacity
+              });
+              item.style.zIndex = target.zIndex;
+              onOneComplete();
+            }
+          });
+        } else if (isBecomingActive) {
+          const entranceX = THROW_DISTANCE * lastThrowSide;
+          const entranceRotate = THROW_ROTATION * lastThrowSide;
+          const entranceRotateY = THROW_ROTATE_Y * lastThrowSide;
+          gsap.set(item, {
+            top: target.top,
+            x: entranceX,
+            xPercent: -50,
+            y: THROW_LIFT * 0.3,
+            rotate: entranceRotate,
+            rotateY: entranceRotateY,
+            scale: 1.02,
+            opacity: 1
+          });
+          gsap.to(item, {
+            keyframes: {
+              "40%": {
+                x: entranceX * 0.6,
+                y: -THROW_LIFT,
+                rotate: entranceRotate * 0.6,
+                rotateY: entranceRotateY * 0.6,
+                scale: 1.05,
+                ease: "power1.out"
+              },
+              "100%": {
+                x: 0,
+                xPercent: -50,
+                y: 0,
+                rotate: 0,
+                rotateY: 0,
+                scale: target.scale,
+                ease: "power1.in"
+              }
+            },
+            duration: DURATION,
+            overwrite: true,
+            onComplete: () => {
+              item.style.zIndex = target.zIndex;
+              onOneComplete();
+            }
+          });
+        } else {
+          gsap.to(item, {
+            top: target.top,
+            xPercent: -50,
+            scale: target.scale,
+            opacity: target.opacity,
+            duration: DURATION,
+            ease: EASE,
+            overwrite: true,
+            onComplete: onOneComplete
+          });
+        }
         gsap.to(card, {
           backgroundColor: target.background,
           duration: DURATION,
@@ -1429,15 +2498,18 @@
         });
       });
       renderDots();
+      announceActiveItem();
     }
-    function goTo(index) {
+    function goTo(index, { throwSide = 1 } = {}) {
       const target = (index % total + total) % total;
       if (isAnimating) {
         pendingIndex = target;
         return;
       }
+      const dirDiff = circularDiff(target, activeIndex, total);
+      const direction = dirDiff === 0 ? 1 : Math.sign(dirDiff);
       activeIndex = target;
-      render();
+      render(true, direction, throwSide);
     }
     prevBtn == null ? void 0 : prevBtn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -1447,8 +2519,97 @@
       e.preventDefault();
       goTo(activeIndex + 1);
     });
+    section.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goTo(activeIndex - 1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goTo(activeIndex + 1);
+      }
+    });
+    let dragState = null;
+    function isDragEnabled() {
+      return mobileMq.matches && !prefersReducedMotion();
+    }
+    function onPointerDown(e) {
+      if (!isDragEnabled() || isAnimating) return;
+      const item = e.target.closest(".duo-slider-item.is-active");
+      if (!item) return;
+      dragState = {
+        pointerId: e.pointerId,
+        item,
+        startX: e.clientX,
+        startY: e.clientY,
+        deltaX: 0,
+        deltaY: 0,
+        locked: null
+      };
+    }
+    function lockPageScroll() {
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.overflow = "hidden";
+    }
+    function unlockPageScroll() {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+    }
+    function onPointerMove(e) {
+      if (!dragState || e.pointerId !== dragState.pointerId) return;
+      dragState.deltaX = e.clientX - dragState.startX;
+      dragState.deltaY = e.clientY - dragState.startY;
+      if (dragState.locked === null) {
+        if (Math.abs(dragState.deltaX) > DRAG_DIRECTION_LOCK2) {
+          dragState.locked = "x";
+          dragState.item.setPointerCapture(dragState.pointerId);
+          gsap.killTweensOf(dragState.item);
+          lockPageScroll();
+        } else if (Math.abs(dragState.deltaY) > DRAG_DIRECTION_LOCK2) {
+          dragState.locked = "y";
+          dragState = null;
+          return;
+        } else {
+          return;
+        }
+      }
+      if (dragState.locked !== "x") return;
+      e.preventDefault();
+      dragState.item.style.zIndex = total + 1;
+      gsap.set(dragState.item, {
+        x: dragState.deltaX,
+        y: dragState.deltaY * 0.2,
+        xPercent: -50,
+        rotate: dragState.deltaX * DRAG_ROTATION_FACTOR
+      });
+    }
+    function onPointerUp(e) {
+      if (!dragState || e.pointerId !== dragState.pointerId) return;
+      const { item, deltaX, locked } = dragState;
+      dragState = null;
+      if (locked === "x") unlockPageScroll();
+      if (locked !== "x") return;
+      if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD2) {
+        goTo(activeIndex + 1, { throwSide: Math.sign(deltaX) });
+      } else {
+        gsap.to(item, {
+          x: 0,
+          y: 0,
+          rotate: 0,
+          xPercent: -50,
+          duration: 0.3,
+          ease: "power2.out"
+        });
+      }
+    }
+    list.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     let resizeTimer;
+    let lastWidth = window.innerWidth;
     window.addEventListener("resize", () => {
+      if (window.innerWidth === lastWidth) return;
+      lastWidth = window.innerWidth;
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(setupLayout, 150);
     });
@@ -1461,6 +2622,8 @@
   var TILT_STRENGTH = 0.6;
   var ENTRY_TILT = 35;
   var MOUSE_EASE = 0.08;
+  var MOBILE_BREAKPOINT6 = 767;
+  var MOBILE_ENTER_DURATION2 = 1.2;
   function readTranslate(el) {
     const transform = getComputedStyle(el).transform;
     if (!transform || transform === "none") return { x: 0, y: 0 };
@@ -1498,6 +2661,7 @@
       zIndex: 1,
       transformPerspective: 1e3
     });
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT6}px)`);
     let st = null;
     let rafId = null;
     let mouseController = null;
@@ -1510,6 +2674,32 @@
         cancelAnimationFrame(rafId);
         rafId = null;
       }
+    }
+    function updateToolsProgress(progress, mouseX = 0, mouseY = 0) {
+      gsap.set(main, {
+        rotateY: mouseX * TILT_STRENGTH * mainDepth * progress,
+        rotateX: -mouseY * TILT_STRENGTH * mainDepth * progress
+      });
+      tools.forEach((tool, index) => {
+        const { offset, depth } = toolData[index];
+        const x = offset.x * progress + mouseX * PARALLAX_STRENGTH * depth;
+        const y = offset.y * progress + mouseY * PARALLAX_STRENGTH * depth;
+        const entryFactor = 1 - progress;
+        const dirX = offset.x !== 0 ? Math.sign(offset.x) : 0;
+        const dirY = offset.y !== 0 ? Math.sign(offset.y) : 0;
+        const entryRotateY = -dirX * ENTRY_TILT * entryFactor;
+        const entryRotateX = dirY * ENTRY_TILT * entryFactor;
+        const mouseRotateY = mouseX * TILT_STRENGTH * depth * progress;
+        const mouseRotateX = -mouseY * TILT_STRENGTH * depth * progress;
+        gsap.set(tool, {
+          x,
+          y,
+          rotateX: entryRotateX + mouseRotateX,
+          rotateY: entryRotateY + mouseRotateY,
+          scale: 0.4 + 0.6 * progress,
+          opacity: progress
+        });
+      });
     }
     function applyStaticState() {
       content.style.perspective = "none";
@@ -1533,31 +2723,8 @@
       let mouseY = 0;
       let curMouseX = 0;
       let curMouseY = 0;
-      function updateTools() {
-        gsap.set(main, {
-          rotateY: curMouseX * TILT_STRENGTH * mainDepth * progress,
-          rotateX: -curMouseY * TILT_STRENGTH * mainDepth * progress
-        });
-        tools.forEach((tool, index) => {
-          const { offset, depth } = toolData[index];
-          const x = offset.x * progress + curMouseX * PARALLAX_STRENGTH * depth;
-          const y = offset.y * progress + curMouseY * PARALLAX_STRENGTH * depth;
-          const entryFactor = 1 - progress;
-          const dirX = offset.x !== 0 ? Math.sign(offset.x) : 0;
-          const dirY = offset.y !== 0 ? Math.sign(offset.y) : 0;
-          const entryRotateY = -dirX * ENTRY_TILT * entryFactor;
-          const entryRotateX = dirY * ENTRY_TILT * entryFactor;
-          const mouseRotateY = curMouseX * TILT_STRENGTH * depth * progress;
-          const mouseRotateX = -curMouseY * TILT_STRENGTH * depth * progress;
-          gsap.set(tool, {
-            x,
-            y,
-            rotateX: entryRotateX + mouseRotateX,
-            rotateY: entryRotateY + mouseRotateY,
-            scale: 0.4 + 0.6 * progress,
-            opacity: progress
-          });
-        });
+      function tick() {
+        updateToolsProgress(progress, curMouseX, curMouseY);
       }
       const trigger = ScrollTrigger.create({
         id: "zoom-reveal",
@@ -1572,7 +2739,7 @@
         invalidateOnRefresh: true,
         onUpdate: (self) => {
           progress = self.progress;
-          updateTools();
+          tick();
         }
       });
       function onMouseMove(e) {
@@ -1591,27 +2758,295 @@
         }
         curMouseX += (mouseX - curMouseX) * MOUSE_EASE;
         curMouseY += (mouseY - curMouseY) * MOUSE_EASE;
-        updateTools();
+        tick();
         rafId = requestAnimationFrame(raf);
       }
       rafId = requestAnimationFrame(raf);
       return trigger;
     }
-    function setup(reduced) {
+    function createMobileEnterAnimation() {
+      content.style.perspective = "1400px";
+      updateToolsProgress(0);
+      const state = { progress: 0 };
+      return ScrollTrigger.create({
+        id: "zoom-reveal-mobile-enter",
+        trigger: section,
+        start: "top 80%",
+        once: true,
+        onEnter: () => {
+          gsap.to(state, {
+            progress: 1,
+            duration: MOBILE_ENTER_DURATION2,
+            ease: "power2.out",
+            onUpdate: () => updateToolsProgress(state.progress)
+          });
+        }
+      });
+    }
+    function setup() {
       if (st) {
         st.kill();
         st = null;
       }
       stopMouseLoop();
-      if (reduced) {
+      if (prefersReducedMotion()) {
         applyStaticState();
+      } else if (mobileMq.matches) {
+        st = createMobileEnterAnimation();
       } else {
         st = createScrollAndMouseAnimation();
         ScrollTrigger.refresh();
       }
     }
-    setup(prefersReducedMotion());
+    setup();
     onMotionPreferenceChange(setup);
+    mobileMq.addEventListener("change", () => {
+      if (!document.body.contains(section)) return;
+      setup();
+    });
+    return st;
+  }
+
+  // src/explain-steps.js
+  var SLIDE_DURATION = 0.7;
+  var SLIDE_EASE = "power3.inOut";
+  var UNSTOP_DELAY = 0.05;
+  var WIPE_RADIUS = 24;
+  var MOBILE_BREAKPOINT7 = 767;
+  function clipHidden(dir) {
+    return dir > 0 ? `inset(100% 0% 0% 0% round ${WIPE_RADIUS}px)` : `inset(0% 0% 100% 0% round ${WIPE_RADIUS}px)`;
+  }
+  function clipRevealed() {
+    return `inset(0% 0% 0% 0% round ${WIPE_RADIUS}px)`;
+  }
+  function lenisStop() {
+    var _a;
+    (_a = window.lenis) == null ? void 0 : _a.stop();
+  }
+  function lenisStart() {
+    var _a;
+    (_a = window.lenis) == null ? void 0 : _a.start();
+  }
+  function scrollTo(y) {
+    if (window.lenis) {
+      window.lenis.scrollTo(y, { immediate: true });
+    } else {
+      window.scrollTo(0, y);
+    }
+  }
+  function initExplainSteps(root = document) {
+    if (typeof ScrollTrigger === "undefined") return;
+    const section = root.querySelector(".explain");
+    if (!section) return;
+    if (section.dataset.explainInit) return;
+    section.dataset.explainInit = "1";
+    const stepEls = Array.from(section.querySelectorAll(":scope > .explain-step"));
+    const total = stepEls.length;
+    if (!total) return;
+    const steps = stepEls.map((step) => ({
+      step,
+      banner: step.querySelector(":scope > .explain-step-banner")
+    }));
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT7}px)`);
+    let st = null;
+    let currentActiveIndex = -1;
+    let activeTimeline = null;
+    function targetY(index, activeIndex) {
+      return (index - activeIndex) * window.innerHeight;
+    }
+    function setStepStacking(topIndex, secondIndex) {
+      steps.forEach(({ step }, index) => {
+        if (index === topIndex) step.style.zIndex = 3;
+        else if (index === secondIndex) step.style.zIndex = 2;
+        else step.style.zIndex = 1;
+      });
+    }
+    function resetBannerNeutral(banner) {
+      if (!banner) return;
+      gsap.killTweensOf(banner);
+      gsap.set(banner, { opacity: 0, clipPath: clipHidden(1) });
+      banner.style.pointerEvents = "none";
+    }
+    function setBannerStable(activeIndex) {
+      setStepStacking(activeIndex, -1);
+      steps.forEach(({ banner }, index) => {
+        if (!banner) return;
+        if (index === activeIndex) {
+          gsap.killTweensOf(banner);
+          gsap.set(banner, { opacity: 1, clipPath: clipRevealed() });
+          banner.style.pointerEvents = "auto";
+        } else {
+          resetBannerNeutral(banner);
+        }
+      });
+    }
+    function setStepsImmediate(activeIndex) {
+      steps.forEach(({ step, banner }, index) => {
+        const y = targetY(index, activeIndex);
+        gsap.set(step, { y });
+        if (banner) gsap.set(banner, { y: -y });
+        step.style.pointerEvents = index === activeIndex ? "auto" : "none";
+      });
+      setBannerStable(activeIndex);
+      currentActiveIndex = activeIndex;
+    }
+    function applyStaticState() {
+      if (activeTimeline) {
+        activeTimeline.kill();
+        activeTimeline = null;
+      }
+      lenisStart();
+      steps.forEach(({ banner }) => {
+        if (banner) gsap.set(banner, { xPercent: -50, yPercent: -50 });
+      });
+      setStepsImmediate(total - 1);
+    }
+    function applyMobileFlowState() {
+      if (activeTimeline) {
+        activeTimeline.kill();
+        activeTimeline = null;
+      }
+      lenisStart();
+      steps.forEach(({ step, banner }) => {
+        gsap.set(step, { clearProps: "all" });
+        step.style.pointerEvents = "";
+        step.style.zIndex = "";
+        if (banner) {
+          gsap.killTweensOf(banner);
+          gsap.set(banner, { clearProps: "all" });
+          banner.style.pointerEvents = "";
+        }
+      });
+      currentActiveIndex = -1;
+    }
+    function bandCenter(trigger, stepIndex) {
+      const bandProgress = (stepIndex + 0.5) / total;
+      return trigger.start + bandProgress * (trigger.end - trigger.start);
+    }
+    function stepToward(trigger, nextIndex) {
+      var _a, _b;
+      const outgoingIndex = currentActiveIndex;
+      const outgoingBanner = (_a = steps[outgoingIndex]) == null ? void 0 : _a.banner;
+      const incomingBanner = (_b = steps[nextIndex]) == null ? void 0 : _b.banner;
+      const dir = nextIndex > outgoingIndex ? 1 : -1;
+      currentActiveIndex = nextIndex;
+      steps.forEach(({ step }, index) => {
+        step.style.pointerEvents = index === nextIndex ? "auto" : "none";
+      });
+      setStepStacking(nextIndex, outgoingIndex);
+      steps.forEach(({ banner }, index) => {
+        if (index === outgoingIndex || index === nextIndex) return;
+        resetBannerNeutral(banner);
+      });
+      if (outgoingBanner) {
+        gsap.killTweensOf(outgoingBanner);
+        gsap.set(outgoingBanner, { opacity: 1, clipPath: clipRevealed() });
+        outgoingBanner.style.pointerEvents = "none";
+      }
+      if (incomingBanner) {
+        gsap.killTweensOf(incomingBanner);
+        gsap.set(incomingBanner, { opacity: 1, clipPath: clipHidden(dir) });
+        incomingBanner.style.pointerEvents = "auto";
+      }
+      lenisStop();
+      gsap.set(
+        steps.flatMap(({ step, banner }) => banner ? [step, banner] : [step]),
+        { willChange: "transform" }
+      );
+      activeTimeline = gsap.timeline({
+        onComplete: () => {
+          activeTimeline = null;
+          if (outgoingBanner) {
+            resetBannerNeutral(outgoingBanner);
+          }
+          setStepStacking(nextIndex, -1);
+          gsap.set(
+            steps.flatMap(({ step, banner }) => banner ? [step, banner] : [step]),
+            { willChange: "auto" }
+          );
+          scrollTo(bandCenter(trigger, nextIndex));
+          gsap.delayedCall(UNSTOP_DELAY, lenisStart);
+        }
+      });
+      steps.forEach(({ step, banner }, index) => {
+        const y = targetY(index, nextIndex);
+        activeTimeline.to(step, { y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
+        if (banner) {
+          activeTimeline.to(banner, { y: -y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
+        }
+      });
+      if (incomingBanner) {
+        activeTimeline.to(
+          incomingBanner,
+          { clipPath: clipRevealed(), duration: SLIDE_DURATION, ease: SLIDE_EASE },
+          0
+        );
+      }
+      if (outgoingBanner) {
+        activeTimeline.to(
+          outgoingBanner,
+          { opacity: 0, duration: SLIDE_DURATION, ease: SLIDE_EASE },
+          0
+        );
+      }
+    }
+    function updateStep(trigger, progress, immediate = false) {
+      const targetIndex = Math.min(total - 1, Math.floor(progress * total));
+      if (immediate) {
+        setStepsImmediate(targetIndex);
+        return;
+      }
+      if (activeTimeline) return;
+      if (targetIndex === currentActiveIndex) return;
+      const dir = targetIndex > currentActiveIndex ? 1 : -1;
+      stepToward(trigger, currentActiveIndex + dir);
+    }
+    function createScrollAnimation() {
+      currentActiveIndex = -1;
+      activeTimeline = null;
+      steps.forEach(({ banner }) => {
+        if (banner) gsap.set(banner, { xPercent: -50, yPercent: -50 });
+      });
+      const trigger = ScrollTrigger.create({
+        id: "explain-steps",
+        trigger: section,
+        start: "top top+=1",
+        end: () => "+=" + total * window.innerHeight * 0.8,
+        pin: true,
+        pinType: "transform",
+        pinSpacing: true,
+        scrub: 0.5,
+        anticipatePin: 1,
+        invalidateOnRefresh: true,
+        onUpdate: (self) => updateStep(trigger, self.progress)
+      });
+      updateStep(trigger, trigger.progress, true);
+      return trigger;
+    }
+    function setup() {
+      if (st) {
+        st.kill();
+        st = null;
+      }
+      lenisStart();
+      if (mobileMq.matches) {
+        st = null;
+        applyMobileFlowState();
+        return;
+      }
+      if (prefersReducedMotion()) {
+        applyStaticState();
+      } else {
+        st = createScrollAnimation();
+        ScrollTrigger.refresh();
+      }
+    }
+    setup();
+    onMotionPreferenceChange(setup);
+    mobileMq.addEventListener("change", () => {
+      if (!document.body.contains(section)) return;
+      setup();
+    });
     return st;
   }
 
@@ -1818,7 +3253,14 @@
       st.vars.refreshPriority = total - index;
     });
   }
+  function syncScrollbarVisibility(root) {
+    var _a, _b;
+    const container = ((_a = root.matches) == null ? void 0 : _a.call(root, '[data-barba="container"]')) ? root : (_b = root.querySelector) == null ? void 0 : _b.call(root, '[data-barba="container"]');
+    const shouldHide = (container == null ? void 0 : container.dataset.scrollbar) === "false";
+    document.documentElement.toggleAttribute("data-scrollbar-false", shouldHide);
+  }
   function reinitModules(root) {
+    syncScrollbarVisibility(root);
     if (typeof ScrollTrigger !== "undefined") {
       ScrollTrigger.getAll().forEach((st) => st.kill());
     }
@@ -1827,6 +3269,8 @@
     initCollapseEnhance(root);
     initTableEnhance(root);
     initStepsEnhance(root);
+    normalizeHeadings(root);
+    formatDates(root);
     initNav(root);
     initNavTheme(root);
     initCtaParallax(root);
@@ -1840,12 +3284,14 @@
     initTestimonials(root);
     initSliderTestimonials(root);
     initDuoSlider(root);
+    runSchema(root);
     const pinTriggers = [
       initLargeQuoteReveal(root),
       initWhyCardsConverge(root),
       initHowHorizontalScroll(root),
       initWhatStepsCrossfade(root),
-      initZoomReveal(root)
+      initZoomReveal(root),
+      initExplainSteps(root)
     ];
     assignPinPriorities(pinTriggers);
     if (typeof ScrollTrigger !== "undefined") {
@@ -1861,10 +3307,9 @@
     (_a = window.lenis) == null ? void 0 : _a.resize();
   }
   function scrollToFilteredSectionIfNeeded(root) {
-    const hasCategoryParam = new URLSearchParams(window.location.search).has(
-      "category"
-    );
-    if (!hasCategoryParam) return;
+    const params = new URLSearchParams(window.location.search);
+    const hasFilterParam = params.has("category") || params.has("search");
+    if (!hasFilterParam) return;
     const section = root.querySelector(".blog-list");
     if (!section) return;
     if (window.lenis) {
@@ -1921,6 +3366,6 @@
 
   // src/index.js
   var BUILD_VERSION = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  console.log(`%c[Overflo] main.js \u2014 build ${BUILD_VERSION}`, "color:#7dd3fc");
+  console.log(`%c[Overflo3] main.js \u2014 build ${BUILD_VERSION}`, "color:#7dd3fc");
 })();
 //# sourceMappingURL=main.js.map
