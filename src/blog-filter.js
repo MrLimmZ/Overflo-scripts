@@ -14,7 +14,7 @@ function populateCategorySelect(root, select) {
   }
 
   select.innerHTML = "";
-  select.appendChild(new Option("Toutes catégories", "all"));
+  select.appendChild(new Option("All categories", "all"));
 
   slugEls.forEach((el) => {
     const slug = el.dataset.categorySlug;
@@ -35,6 +35,12 @@ export function initBlogFilter(root = document) {
   const listWrapper = root.querySelector("[data-blog-list]");
   const items = listWrapper ? listWrapper.querySelectorAll(".w-dyn-item") : [];
   const emptyState = root.querySelector("[data-blog-empty]");
+
+  if (emptyState) {
+    emptyState.setAttribute("role", "status");
+    emptyState.setAttribute("aria-live", "polite");
+    emptyState.hidden = true;
+  }
 
   populateCategorySelect(root, categorySelect);
 
@@ -86,8 +92,13 @@ export function initBlogFilter(root = document) {
       if (visible) visibleCount++;
     });
 
+    const hasResults = visibleCount > 0;
+
+    listWrapper.setAttribute("aria-hidden", hasResults ? "false" : "true");
+
     if (emptyState) {
-      emptyState.classList.toggle("is-visible", visibleCount === 0);
+      emptyState.classList.toggle("is-visible", !hasResults);
+      emptyState.hidden = hasResults;
     }
 
     if (typeof ScrollTrigger !== "undefined") {

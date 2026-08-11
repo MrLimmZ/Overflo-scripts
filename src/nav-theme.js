@@ -36,41 +36,59 @@ function getImageLuminance(img) {
   });
 }
 
+function horizontallyOverlaps(rectA, rectB) {
+  return rectA.left < rectB.right && rectA.right > rectB.left;
+}
+
 export function initNavTheme(root = document) {
   const nav = document.querySelector(".navbar");
   if (!nav) return;
 
+  const zones = [
+    { el: nav.querySelector(".navbar-left"), className: "nav-light-logo", side: "left" },
+    { el: nav.querySelector(".navbar-right .menu"), className: "nav-light-menu", side: "right" },
+    { el: nav.querySelector(".navbar-right .button"), className: "nav-light-button", side: "right" },
+  ].filter((zone) => zone.el);
+
   const sections = root.querySelectorAll("[data-nav-theme]");
 
   if (!sections.length || typeof ScrollTrigger === "undefined") {
-    nav.classList.remove("nav-light-left", "nav-light-right");
+    zones.forEach((zone) => zone.el.classList.remove(zone.className));
     return;
   }
 
-  const triggers = [];
+  const entries = [];
   const triggerOffset = nav.offsetHeight / 2;
 
   function recompute() {
-    const activeLeft = [...triggers]
-      .reverse()
-      .find((t) => t.trigger.isActive && (t.side === "left" || t.side === "both"));
-    const activeRight = [...triggers]
-      .reverse()
-      .find((t) => t.trigger.isActive && (t.side === "right" || t.side === "both"));
+    const active = [...entries].reverse().find((entry) => entry.trigger.isActive && entry.theme);
 
-    const themeLeft = activeLeft ? activeLeft.theme : "dark";
-    const themeRight = activeRight ? activeRight.theme : "dark";
+    if (!active || active.theme !== "light") {
+      zones.forEach((zone) => zone.el.classList.remove(zone.className));
+      return;
+    }
 
-    nav.classList.toggle("nav-light-left", themeLeft === "light");
-    nav.classList.toggle("nav-light-right", themeRight === "light");
+    if (!active.img) {
+      zones.forEach((zone) => {
+        const matchesSide = !active.side || active.side === "both" || active.side === zone.side;
+        zone.el.classList.toggle(zone.className, matchesSide);
+      });
+      return;
+    }
+
+    const imgRect = active.img.getBoundingClientRect();
+    zones.forEach((zone) => {
+      const zoneRect = zone.el.getBoundingClientRect();
+      zone.el.classList.toggle(zone.className, horizontallyOverlaps(zoneRect, imgRect));
+    });
   }
 
   sections.forEach((section) => {
     const declaredTheme = section.dataset.navTheme;
-    const side = section.dataset.navThemeSide || "both";
     const entry = {
       theme: declaredTheme === "auto" ? "dark" : declaredTheme,
-      side,
+      img: null,
+      side: section.dataset.navThemeSide || null,
     };
 
     entry.trigger = ScrollTrigger.create({
@@ -80,7 +98,7 @@ export function initNavTheme(root = document) {
       onToggle: recompute,
     });
 
-    triggers.push(entry);
+    entries.push(entry);
 
     if (declaredTheme !== "auto") return;
 
@@ -91,6 +109,8 @@ export function initNavTheme(root = document) {
       return;
     }
 
+    entry.img = img;
+
     getImageLuminance(img)
       .then((luminance) => {
         entry.theme = luminance > LUMINANCE_THRESHOLD ? "dark" : "light";
@@ -100,6 +120,8 @@ export function initNavTheme(root = document) {
         console.warn("[NavTheme] Analyse de l'image impossible, fallback:", entry.theme, err);
       });
   });
+
+  window.addEventListener("resize", recompute);
 
   recompute();
 }

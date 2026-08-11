@@ -6,6 +6,8 @@ const PARALLAX_STRENGTH = 3;
 const TILT_STRENGTH = 0.6;
 const ENTRY_TILT = 35;
 const MOUSE_EASE = 0.08;
+const MOBILE_BREAKPOINT = 767;
+const MOBILE_ENTER_DURATION = 1.2;
 
 function readTranslate(el) {
   const transform = getComputedStyle(el).transform;
@@ -51,6 +53,8 @@ export function initZoomReveal(root = document) {
     transformPerspective: 1000,
   });
 
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+
   let st = null;
   let rafId = null;
   let mouseController = null;
@@ -64,6 +68,43 @@ export function initZoomReveal(root = document) {
       cancelAnimationFrame(rafId);
       rafId = null;
     }
+  }
+
+  // Positionne main/tools pour une progression donnée (0 = état de
+  // départ caché, 1 = état final révélé) — partagé entre la version
+  // desktop (pilotée par le scroll + la souris) et la version mobile
+  // (jouée une fois à l'entrée, sans souris).
+  function updateToolsProgress(progress, mouseX = 0, mouseY = 0) {
+    gsap.set(main, {
+      rotateY: mouseX * TILT_STRENGTH * mainDepth * progress,
+      rotateX: -mouseY * TILT_STRENGTH * mainDepth * progress,
+    });
+
+    tools.forEach((tool, index) => {
+      const { offset, depth } = toolData[index];
+
+      const x = offset.x * progress + mouseX * PARALLAX_STRENGTH * depth;
+      const y = offset.y * progress + mouseY * PARALLAX_STRENGTH * depth;
+
+      const entryFactor = 1 - progress;
+      const dirX = offset.x !== 0 ? Math.sign(offset.x) : 0;
+      const dirY = offset.y !== 0 ? Math.sign(offset.y) : 0;
+
+      const entryRotateY = -dirX * ENTRY_TILT * entryFactor;
+      const entryRotateX = dirY * ENTRY_TILT * entryFactor;
+
+      const mouseRotateY = mouseX * TILT_STRENGTH * depth * progress;
+      const mouseRotateX = -mouseY * TILT_STRENGTH * depth * progress;
+
+      gsap.set(tool, {
+        x,
+        y,
+        rotateX: entryRotateX + mouseRotateX,
+        rotateY: entryRotateY + mouseRotateY,
+        scale: 0.4 + 0.6 * progress,
+        opacity: progress,
+      });
+    });
   }
 
   function applyStaticState() {
@@ -91,37 +132,8 @@ export function initZoomReveal(root = document) {
     let curMouseX = 0;
     let curMouseY = 0;
 
-    function updateTools() {
-      gsap.set(main, {
-        rotateY: curMouseX * TILT_STRENGTH * mainDepth * progress,
-        rotateX: -curMouseY * TILT_STRENGTH * mainDepth * progress,
-      });
-
-      tools.forEach((tool, index) => {
-        const { offset, depth } = toolData[index];
-
-        const x = offset.x * progress + curMouseX * PARALLAX_STRENGTH * depth;
-        const y = offset.y * progress + curMouseY * PARALLAX_STRENGTH * depth;
-
-        const entryFactor = 1 - progress;
-        const dirX = offset.x !== 0 ? Math.sign(offset.x) : 0;
-        const dirY = offset.y !== 0 ? Math.sign(offset.y) : 0;
-
-        const entryRotateY = -dirX * ENTRY_TILT * entryFactor;
-        const entryRotateX = dirY * ENTRY_TILT * entryFactor;
-
-        const mouseRotateY = curMouseX * TILT_STRENGTH * depth * progress;
-        const mouseRotateX = -curMouseY * TILT_STRENGTH * depth * progress;
-
-        gsap.set(tool, {
-          x,
-          y,
-          rotateX: entryRotateX + mouseRotateX,
-          rotateY: entryRotateY + mouseRotateY,
-          scale: 0.4 + 0.6 * progress,
-          opacity: progress,
-        });
-      });
+    function tick() {
+      updateToolsProgress(progress, curMouseX, curMouseY);
     }
 
     const trigger = ScrollTrigger.create({
@@ -137,7 +149,7 @@ export function initZoomReveal(root = document) {
       invalidateOnRefresh: true,
       onUpdate: (self) => {
         progress = self.progress;
-        updateTools();
+        tick();
       },
     });
 
@@ -159,7 +171,7 @@ export function initZoomReveal(root = document) {
       }
       curMouseX += (mouseX - curMouseX) * MOUSE_EASE;
       curMouseY += (mouseY - curMouseY) * MOUSE_EASE;
-      updateTools();
+      tick();
       rafId = requestAnimationFrame(raf);
     }
     rafId = requestAnimationFrame(raf);
@@ -167,23 +179,55 @@ export function initZoomReveal(root = document) {
     return trigger;
   }
 
-  function setup(reduced) {
+  // Mobile : même effet visuel que desktop, mais joué une seule fois
+  // (pas de scrub lié au scroll, pas de parallaxe souris) au moment où
+  // la section entre dans l'écran.
+  function createMobileEnterAnimation() {
+    content.style.perspective = "1400px";
+    updateToolsProgress(0);
+
+    const state = { progress: 0 };
+
+    return ScrollTrigger.create({
+      id: "zoom-reveal-mobile-enter",
+      trigger: section,
+      start: "top 80%",
+      once: true,
+      onEnter: () => {
+        gsap.to(state, {
+          progress: 1,
+          duration: MOBILE_ENTER_DURATION,
+          ease: "power2.out",
+          onUpdate: () => updateToolsProgress(state.progress),
+        });
+      },
+    });
+  }
+
+  function setup() {
     if (st) {
       st.kill();
       st = null;
     }
     stopMouseLoop();
 
-    if (reduced) {
+    if (prefersReducedMotion()) {
       applyStaticState();
+    } else if (mobileMq.matches) {
+      st = createMobileEnterAnimation();
     } else {
       st = createScrollAndMouseAnimation();
       ScrollTrigger.refresh();
     }
   }
 
-  setup(prefersReducedMotion());
+  setup();
   onMotionPreferenceChange(setup);
+
+  mobileMq.addEventListener("change", () => {
+    if (!document.body.contains(section)) return;
+    setup();
+  });
 
   return st;
 }

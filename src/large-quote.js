@@ -2,6 +2,62 @@
 
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
 
+const MOBILE_BREAKPOINT = 767;
+const MOBILE_SMOOTH_EASE = 0.15; // vitesse de rattrapage vers la vraie position de scroll
+
+function splitIntoWordTokens(html) {
+  const withMarkers = html.replace(/<br\s*\/?>/gi, " \n ");
+  const div = document.createElement("div");
+  div.innerHTML = withMarkers;
+  const text = div.textContent || "";
+  return text.split(/\s+/).filter(Boolean);
+}
+
+function detectVisualLines(measureEl, tokens) {
+  measureEl.innerHTML = "";
+  const wordEls = [];
+
+  tokens.forEach((token) => {
+    if (token === "\n") {
+      wordEls.push({ forcedBreak: true });
+      return;
+    }
+    const span = document.createElement("span");
+    span.className = "large-quote-word";
+    span.textContent = token;
+    measureEl.appendChild(span);
+    measureEl.appendChild(document.createTextNode(" "));
+    wordEls.push({ el: span, forcedBreak: false });
+  });
+
+  const lines = [];
+  let currentWords = [];
+  let currentTop = null;
+  let forceBreak = false;
+
+  wordEls.forEach((w) => {
+    if (w.forcedBreak) {
+      forceBreak = true;
+      return;
+    }
+    const top = w.el.offsetTop;
+    if (currentTop === null) {
+      currentTop = top;
+      currentWords.push(w.el.textContent);
+    } else if (top !== currentTop || forceBreak) {
+      lines.push(currentWords.join(" "));
+      currentWords = [w.el.textContent];
+      currentTop = top;
+      forceBreak = false;
+    } else {
+      currentWords.push(w.el.textContent);
+    }
+  });
+  if (currentWords.length) lines.push(currentWords.join(" "));
+
+  return lines;
+}
+
 export function initLargeQuoteReveal(root = document) {
   if (typeof ScrollTrigger === "undefined") return;
 
@@ -12,38 +68,26 @@ export function initLargeQuoteReveal(root = document) {
   if (textEl.dataset.revealInit) return;
   textEl.dataset.revealInit = "1";
 
-  const lineStrings = textEl.innerHTML
-    .split(/<br\s*\/?>/i)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const originalHTML = textEl.innerHTML;
+  const tokens = splitIntoWordTokens(originalHTML);
 
-  textEl.innerHTML = "";
   textEl.classList.add("large-quote-text-lines");
 
-  const overlays = lineStrings.map((lineHTML) => {
-    const lineWrap = document.createElement("div");
-    lineWrap.className = "large-quote-line-wrap";
-
-    const base = document.createElement("div");
-    base.className = "large-quote-text-base";
-    base.innerHTML = lineHTML;
-
-    const overlay = document.createElement("div");
-    overlay.className = "large-quote-text-reveal";
-    overlay.setAttribute("aria-hidden", "true");
-    overlay.innerHTML = lineHTML;
-
-    lineWrap.appendChild(base);
-    lineWrap.appendChild(overlay);
-    textEl.appendChild(lineWrap);
-
-    return overlay;
-  });
-
-  const total = overlays.length;
-  if (!total) return;
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
   let st = null;
+  let overlays = [];
+  let total = 0;
+
+  function updateOverlays(progress) {
+    overlays.forEach((overlay, index) => {
+      const segmentStart = index / total;
+      const segmentEnd = (index + 1) / total;
+      const raw = (progress - segmentStart) / (segmentEnd - segmentStart);
+      const lineProgress = Math.min(1, Math.max(0, raw));
+      overlay.style.setProperty("--reveal", `${lineProgress * 100}%`);
+    });
+  }
 
   function applyStaticState() {
     overlays.forEach((overlay) => {
@@ -51,7 +95,35 @@ export function initLargeQuoteReveal(root = document) {
     });
   }
 
-  function createScrollAnimation() {
+  function rebuildLines() {
+    const lineStrings = detectVisualLines(textEl, tokens);
+
+    textEl.innerHTML = "";
+    overlays = lineStrings.map((line) => {
+      const lineWrap = document.createElement("div");
+      lineWrap.className = "large-quote-line-wrap";
+
+      const base = document.createElement("div");
+      base.className = "large-quote-text-base";
+      base.textContent = line;
+
+      const overlay = document.createElement("div");
+      overlay.className = "large-quote-text-reveal";
+      overlay.setAttribute("aria-hidden", "true");
+      overlay.textContent = line;
+
+      lineWrap.appendChild(base);
+      lineWrap.appendChild(overlay);
+      textEl.appendChild(lineWrap);
+
+      return overlay;
+    });
+    total = overlays.length;
+  }
+
+  function createPinnedScrollAnimation() {
+    // Desktop : Lenis lisse déjà le scroll en amont, self.progress
+    // arrive déjà "smooth" — rien à ajouter ici.
     return ScrollTrigger.create({
       id: "large-quote-reveal",
       trigger: section,
@@ -63,33 +135,85 @@ export function initLargeQuoteReveal(root = document) {
       scrub: 0.5,
       anticipatePin: 1,
       invalidateOnRefresh: true,
-      onUpdate: (self) => {
-        overlays.forEach((overlay, index) => {
-          const segmentStart = index / total;
-          const segmentEnd = (index + 1) / total;
-          const raw = (self.progress - segmentStart) / (segmentEnd - segmentStart);
-          const lineProgress = Math.min(1, Math.max(0, raw));
-          overlay.style.setProperty("--reveal", `${lineProgress * 100}%`);
-        });
-      },
+      onUpdate: (self) => updateOverlays(self.progress),
     });
   }
 
-  function setup(reduced) {
+  function createUnpinnedScrollAnimation() {
+    // Mobile (pas de Lenis) : scrub seul n'a aucun effet ici puisque ce
+    // ScrollTrigger n'a pas d'animation GSAP attachée (juste un
+    // onUpdate) — self.progress reflète donc la position de scroll
+    // BRUTE, qui arrive par à-coups pendant un scroll lancé sur
+    // mobile. On lisse nous-mêmes : une boucle rAF qui rattrape
+    // progressivement la vraie valeur plutôt que de sauter dessus.
+    let targetProgress = 0;
+    let currentProgress = 0;
+    let rafId = null;
+
+    function tick() {
+      currentProgress += (targetProgress - currentProgress) * MOBILE_SMOOTH_EASE;
+      updateOverlays(currentProgress);
+      rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+
+    const trigger = ScrollTrigger.create({
+      id: "large-quote-reveal-mobile",
+      trigger: section,
+      start: "top bottom",
+      end: "bottom bottom",
+      invalidateOnRefresh: true,
+      onUpdate: (self) => {
+        targetProgress = self.progress;
+      },
+      onKill: () => {
+        if (rafId) cancelAnimationFrame(rafId);
+      },
+    });
+
+    return trigger;
+  }
+
+  function setup() {
     if (st) {
       st.kill();
       st = null;
     }
-    if (reduced) {
+    if (!total) return;
+
+    if (prefersReducedMotion()) {
       applyStaticState();
+    } else if (mobileMq.matches) {
+      st = createUnpinnedScrollAnimation();
+      ScrollTrigger.refresh();
     } else {
-      st = createScrollAnimation();
+      st = createPinnedScrollAnimation();
       ScrollTrigger.refresh();
     }
   }
 
-  setup(prefersReducedMotion());
+  rebuildLines();
+  setup();
   onMotionPreferenceChange(setup);
+
+  mobileMq.addEventListener("change", () => {
+    if (!document.body.contains(section)) return;
+    setup();
+  });
+
+  let resizeTimer;
+  let lastWidth = window.innerWidth;
+  window.addEventListener("resize", () => {
+    if (window.innerWidth === lastWidth) return;
+    lastWidth = window.innerWidth;
+
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (!document.body.contains(section)) return;
+      rebuildLines();
+      setup();
+    }, 150);
+  });
 
   return st;
 }

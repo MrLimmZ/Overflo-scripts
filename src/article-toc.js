@@ -18,7 +18,6 @@ export function initArticleToc(root = document) {
   const allHeadings = Array.from(contentText.querySelectorAll("h1, h2, h3, h4, h5, h6"));
   if (!allHeadings.length) return;
 
-  // Niveau le plus haut présent (h1 > h2 > ... > h6, donc le plus PETIT numéro)
   const topLevel = Math.min(...allHeadings.map((h) => parseInt(h.tagName[1], 10)));
   const headings = allHeadings.filter((h) => parseInt(h.tagName[1], 10) === topLevel);
   if (!headings.length) return;
@@ -61,7 +60,13 @@ export function initArticleToc(root = document) {
 
   function setActive(activeEntry) {
     entries.forEach(({ link, option }) => {
-      link.classList.toggle("is-active", link === activeEntry?.link);
+      const isActive = link === activeEntry?.link;
+      link.classList.toggle("is-active", isActive);
+      if (isActive) {
+        link.setAttribute("aria-current", "location");
+      } else {
+        link.removeAttribute("aria-current");
+      }
       if (option) option.selected = option === activeEntry?.option;
     });
   }

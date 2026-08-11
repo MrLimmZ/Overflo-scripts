@@ -17,6 +17,8 @@ function initRow(wrapper, index, getReduced) {
     track.appendChild(originalList);
   }
 
+  originalList.removeAttribute("aria-hidden");
+
   function ensureEnoughWidth() {
     if (getReduced()) {
       Array.from(track.querySelectorAll(".social-proof-slider")).forEach((el, i) => {
@@ -36,7 +38,9 @@ function initRow(wrapper, index, getReduced) {
 
     let guard = 0;
     while (track.scrollWidth < viewportWidth * 2 && guard < 30) {
-      track.appendChild(originalList.cloneNode(true));
+      const clone = originalList.cloneNode(true);
+      clone.setAttribute("aria-hidden", "true");
+      track.appendChild(clone);
       guard++;
     }
 
@@ -69,7 +73,12 @@ export function initLogoMarquee(root = document) {
     reduced = value;
   });
 
-  root
-    .querySelectorAll(".social-proof-slider--wrapper")
-    .forEach((wrapper, index) => initRow(wrapper, index, () => reduced));
+  const wrappers = root.querySelectorAll(".social-proof-slider--wrapper");
+  const region = wrappers[0]?.closest(".social-proof--right");
+  if (region && !region.hasAttribute("aria-label")) {
+    region.setAttribute("role", "region");
+    region.setAttribute("aria-label", "Partner logos");
+  }
+
+  wrappers.forEach((wrapper, index) => initRow(wrapper, index, () => reduced));
 }

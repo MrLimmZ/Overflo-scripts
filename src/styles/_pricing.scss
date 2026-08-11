@@ -1,27 +1,29 @@
-.pricing-table .pricing-table-item.secondary {
-  border: 1px solid transparent;
-  background:
-    linear-gradient(
-        var(--_colors---text--background-thirdly),
-        var(--_colors---text--background-thirdly)
-      )
-      padding-box,
-    linear-gradient(90deg, rgba(62, 36, 23, 0) 0%, rgba(62, 36, 23, 0.4) 100%)
-      border-box;
-
-  &:first-child {
-    border-right: 0;
-  }
-
-  &:last-child {
-    border-left: 0;
+@media (min-width: 768px) {
+  .pricing-table .pricing-table-item.secondary {
+    border: 1px solid transparent;
     background:
       linear-gradient(
           var(--_colors---text--background-thirdly),
           var(--_colors---text--background-thirdly)
         )
         padding-box,
-      linear-gradient(270deg, rgba(62, 36, 23, 0) 0%, rgba(62, 36, 23, 0.4) 100%)
+      linear-gradient(90deg, rgba(62, 36, 23, 0) 0%, rgba(62, 36, 23, 0.4) 100%)
         border-box;
+
+    &:first-child {
+      border-right: 0;
+    }
+
+    &:last-child {
+      border-left: 0;
+      background:
+        linear-gradient(
+            var(--_colors---text--background-thirdly),
+            var(--_colors---text--background-thirdly)
+          )
+          padding-box,
+        linear-gradient(270deg, rgba(62, 36, 23, 0) 0%, rgba(62, 36, 23, 0.4) 100%)
+          border-box;
+    }
   }
 }

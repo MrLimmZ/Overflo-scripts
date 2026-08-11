@@ -2,6 +2,8 @@
 
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
 
+const MOBILE_BREAKPOINT = 767;
+
 export function initHowHorizontalScroll(root = document) {
   if (typeof ScrollTrigger === "undefined") return;
 
@@ -12,12 +14,18 @@ export function initHowHorizontalScroll(root = document) {
   if (section.dataset.horizontalInit) return;
   section.dataset.horizontalInit = "1";
 
+  // C'est la LISTE (les cartes) qui doit scroller sur mobile, pas
+  // toute la section — sinon le titre .how-header (qui vit dans
+  // .how-track, à côté de .how-list) partirait avec les cartes.
+  const list = track.querySelector(".how-list");
+
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+
   let st = null;
 
   const getScrollDistance = () => {
     const rawDistance = track.scrollWidth - section.clientWidth;
 
-    const list = track.querySelector(".how-list");
     const lastItem = list ? list.lastElementChild : null;
     const lastItemWidth = lastItem ? lastItem.getBoundingClientRect().width : 0;
 
@@ -29,20 +37,34 @@ export function initHowHorizontalScroll(root = document) {
 
   function applyStaticState() {
     track.style.transform = "none";
-    section.style.overflowX = "auto";
-    section.style.webkitOverflowScrolling = "touch";
-    // Rend le conteneur focusable : une fois focus dessus (Tab ou clic),
+    // Reset des styles desktop, au cas où on bascule depuis ce mode
+    // (resize/rotation traversant le seuil mobile).
+    section.style.overflowX = "";
+    section.removeAttribute("tabindex");
+    section.removeAttribute("role");
+    section.removeAttribute("aria-label");
+
+    if (!list) return;
+    list.style.overflowX = "auto";
+    list.style.webkitOverflowScrolling = "touch";
+    // Rend la liste focusable : une fois focus dessus (Tab ou clic),
     // les flèches ←/→ du clavier scrollent nativement, sans JS.
-    section.setAttribute("tabindex", "0");
-    section.setAttribute("role", "region");
-    section.setAttribute("aria-label", "How Overflo works, scrollable steps");
+    list.setAttribute("tabindex", "0");
+    list.setAttribute("role", "region");
+    list.setAttribute("aria-label", "How Overflo works, scrollable steps");
   }
 
   function createScrollAnimation() {
     section.style.overflowX = "hidden";
-    section.removeAttribute("tabindex");
-    section.removeAttribute("role");
-    section.removeAttribute("aria-label");
+
+    // Reset des styles mobile, au cas où on bascule depuis ce mode.
+    if (list) {
+      list.style.overflowX = "";
+      list.style.webkitOverflowScrolling = "";
+      list.removeAttribute("tabindex");
+      list.removeAttribute("role");
+      list.removeAttribute("aria-label");
+    }
 
     return ScrollTrigger.create({
       id: "how-horizontal-scroll",
@@ -63,12 +85,16 @@ export function initHowHorizontalScroll(root = document) {
     });
   }
 
-  function setup(reduced) {
+  function shouldUseStatic() {
+    return prefersReducedMotion() || mobileMq.matches;
+  }
+
+  function setup() {
     if (st) {
       st.kill();
       st = null;
     }
-    if (reduced) {
+    if (shouldUseStatic()) {
       applyStaticState();
     } else {
       st = createScrollAnimation();
@@ -76,8 +102,13 @@ export function initHowHorizontalScroll(root = document) {
     }
   }
 
-  setup(prefersReducedMotion());
+  setup();
   onMotionPreferenceChange(setup);
+
+  mobileMq.addEventListener("change", () => {
+    if (!document.body.contains(section)) return;
+    setup();
+  });
 
   return st;
 }
