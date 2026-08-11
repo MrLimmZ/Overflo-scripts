@@ -3,11 +3,20 @@
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
 
 const MOBILE_BREAKPOINT = 767;
-const MOBILE_CARD_SCALE = 0.6; // cartes trop grandes sur mobile — réduites à 60%
-const MOBILE_ENTER_DURATION = 1.2;
+const MOBILE_CARD_SCALE = 0.6;
+const CORNER_JITTER = 12;
+const FADE_START = 0.5;
+const FADE_END = 0.85;
+const SHRINK_AMOUNT = 0.15;
+const DESKTOP_SHRINK_AMOUNT = 0.25;
+const SMOOTH_EASE = 0.12;
 
 function randomBetween(min, max) {
   return min + Math.random() * (max - min);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function shuffle(array) {
@@ -19,18 +28,16 @@ function shuffle(array) {
   return arr;
 }
 
-function buildAngles(total) {
-  const corners = [45, 135, 225, 315];
-  const sides = [0, 90, 180, 270];
-  const pool = shuffle([...corners, ...sides]);
+function pickDispersedAngles(total) {
+  const corners = shuffle([45, 135, 225, 315]);
+  const sides = shuffle([0, 90, 180, 270]);
+  const pool = [...corners, ...sides];
 
   const angles = [];
   for (let i = 0; i < total; i++) {
-    if (i < pool.length) {
-      angles.push(pool[i]);
-    } else {
-      angles.push(randomBetween(0, 360));
-    }
+    const base = i < pool.length ? pool[i] : randomBetween(0, 360);
+    const angle = (base + randomBetween(-CORNER_JITTER, CORNER_JITTER) + 360) % 360;
+    angles.push(angle);
   }
   return shuffle(angles);
 }
@@ -56,33 +63,16 @@ export function initWhyCardsConverge(root = document) {
     });
   }
 
-  // IMPORTANT : la dispersion se calcule par rapport au VIEWPORT
-  // (window.innerWidth/Height), pas à la section elle-même. Sur
-  // desktop pinné, section == viewport donc ça revenait au même —
-  // mais sur mobile non pinné, la section a sa hauteur naturelle
-  // (souvent bien plus grande que l'écran), donc utiliser sa propre
-  // taille aurait donné des distances complètement décorrélées du
-  // cadre visible réel, plaçant les cartes trop près du centre.
-  //
-  // scale : 1 sur desktop, réduit sur mobile. Appliqué juste après le
-  // centrage (-50%,-50%) donc réduit aussi proportionnellement la
-  // distance de dispersion — cohérent visuellement.
-  function buildCardsAndUpdater(scale) {
+  function buildCardsAndUpdater(scale, shrinkAmount = SHRINK_AMOUNT) {
     const total = items.length;
 
     const halfW = window.innerWidth / 2;
     const halfH = window.innerHeight / 2;
-    const VISIBLE_MARGIN = 90;
-    const CUT_MARGIN = 60;
 
-    const MIN_ROTATE = -18;
-    const MAX_ROTATE = 18;
-
-    const jitter = 15;
-    const baseAngles = buildAngles(total);
+    const baseAngles = pickDispersedAngles(total);
 
     const cards = Array.from(items).map((item, index) => {
-      const angleDeg = baseAngles[index] + randomBetween(-jitter, jitter);
+      const angleDeg = baseAngles[index];
       const rad = (angleDeg * Math.PI) / 180;
       const dx = Math.cos(rad);
       const dy = Math.sin(rad);
@@ -92,12 +82,21 @@ export function initWhyCardsConverge(root = document) {
         halfH / Math.max(Math.abs(dy), 1e-6)
       );
 
-      const tMin = tEdge - VISIBLE_MARGIN;
-      const tMax = tEdge + CUT_MARGIN;
+      const rect = item.getBoundingClientRect();
+      const cardOnScreenHalf = Math.max(rect.width, rect.height) * scale * 0.5;
+
+      const tMin = tEdge - cardOnScreenHalf * 0.2;
+      const tMax = tEdge + cardOnScreenHalf * 1.1;
       const t = randomBetween(tMin, tMax);
 
-      const x = dx * t;
-      const y = dy * t;
+      const screenX = dx * t;
+      const screenY = dy * t;
+
+      const x = screenX / scale;
+      const y = screenY / scale;
+
+      const MIN_ROTATE = -18;
+      const MAX_ROTATE = 18;
       const rotate = randomBetween(MIN_ROTATE, MAX_ROTATE);
 
       item.style.transform = `translate(-50%, -50%) scale(${scale}) translate(${x}px, ${y}px) rotate(${rotate}deg)`;
@@ -114,11 +113,16 @@ export function initWhyCardsConverge(root = document) {
         const currentY = card.y * (1 - eased);
         const currentRotate = card.rotate * (1 - eased);
 
-        card.item.style.transform =
-          `translate(-50%, -50%) scale(${scale}) translate(${currentX}px, ${currentY}px) rotate(${currentRotate}deg)`;
+        const fadeProgress = clamp(
+          (eased - FADE_START) / (FADE_END - FADE_START),
+          0,
+          1
+        );
+        const currentScale = scale * (1 - shrinkAmount * fadeProgress);
 
-        const fadeStart = 0.45;
-        const fadeProgress = Math.max(0, (eased - fadeStart) / (1 - fadeStart));
+        card.item.style.transform =
+          `translate(-50%, -50%) scale(${currentScale}) translate(${currentX}px, ${currentY}px) rotate(${currentRotate}deg)`;
+
         card.item.style.setProperty("opacity", `${1 - fadeProgress}`, "important");
       });
     }
@@ -127,7 +131,7 @@ export function initWhyCardsConverge(root = document) {
   }
 
   function createPinnedScrollAnimation() {
-    const updateCards = buildCardsAndUpdater(1);
+    const updateCards = buildCardsAndUpdater(1, DESKTOP_SHRINK_AMOUNT);
 
     return ScrollTrigger.create({
       id: "why-cards-converge",
@@ -144,40 +148,48 @@ export function initWhyCardsConverge(root = document) {
     });
   }
 
-  // Mobile : plus scrubé au scroll — se joue une seule fois, dès que
-  // le haut de la section atteint le haut du viewport.
-  function createMobileEnterAnimation() {
-    const updateCards = buildCardsAndUpdater(MOBILE_CARD_SCALE);
+  function createScrollLinkedAnimation(scale) {
+    const updateCards = buildCardsAndUpdater(scale, SHRINK_AMOUNT);
     updateCards(0);
 
-    const state = { progress: 0 };
+    let targetProgress = 0;
+    let smoothProgress = 0;
+    let rafId = null;
 
-    return ScrollTrigger.create({
-      id: "why-cards-converge-mobile-enter",
+    function tick() {
+      smoothProgress += (targetProgress - smoothProgress) * SMOOTH_EASE;
+      updateCards(smoothProgress);
+      rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+
+    const trigger = ScrollTrigger.create({
+      id: "why-cards-converge-mobile-scrub",
       trigger: section,
-      start: "top top",
-      once: true,
-      onEnter: () => {
-        gsap.to(state, {
-          progress: 1,
-          duration: MOBILE_ENTER_DURATION,
-          ease: "power2.out",
-          onUpdate: () => updateCards(state.progress),
-        });
+      start: "25% top",
+      end: "75% top",
+      invalidateOnRefresh: true,
+      onUpdate: (self) => {
+        targetProgress = self.progress;
+      },
+      onKill: () => {
+        if (rafId) cancelAnimationFrame(rafId);
       },
     });
+
+    return trigger;
   }
 
   function setup() {
     if (st) {
-      st.kill();
+      (Array.isArray(st) ? st : [st]).forEach((t) => t.kill());
       st = null;
     }
 
     if (prefersReducedMotion()) {
       applyStaticState();
     } else if (mobileMq.matches) {
-      st = createMobileEnterAnimation();
+      st = createScrollLinkedAnimation(MOBILE_CARD_SCALE);
     } else {
       st = createPinnedScrollAnimation();
       ScrollTrigger.refresh();

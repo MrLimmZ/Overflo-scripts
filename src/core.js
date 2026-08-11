@@ -26,8 +26,8 @@ function initLenis() {
   //
   // (ScrollTrigger.normalizeScroll(true) a été testé pour le jitter
   // des pins mobile, mais dégradait la fluidité générale du scroll —
-  // retiré. De toute façon, plus aucune section n'utilise pin sur
-  // mobile désormais, donc pas indispensable.)
+  // retiré. Le fix retenu pour what-steps-crossfade.js passe par un
+  // pinType conditionnel (fixed sur mobile), pas par normalizeScroll.)
   if (typeof ScrollTrigger !== "undefined") {
     ScrollTrigger.config({ autoRefreshEvents: "visibilitychange,DOMContentLoaded,load" });
   }
@@ -37,10 +37,11 @@ function initLenis() {
   // ce qui produit souvent un "lancé" qui glisse en douceur puis
   // s'arrête net, au lieu de ralentir naturellement. Compromis bien
   // connu dans l'écosystème Lenis : lisser la molette sur desktop,
-  // laisser le tactile intact sur mobile. Comme les sections à pin
-  // sont déjà désactivées sur mobile (zoom-reveal.js, large-quote.js,
-  // heading-steps.js...), Lenis n'apporte de toute façon plus grand
-  // chose à cet endroit.
+  // laisser le tactile intact sur mobile.
+  //
+  // Important pour what-steps-crossfade.js : comme Lenis (et son
+  // wrapper transformé) n'existe pas ici, le pin de cette section
+  // utilise pinType "fixed" sur mobile plutôt que "transform".
   const isMobile = window.matchMedia("(max-width: 767px)").matches;
   if (isMobile) {
     if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
