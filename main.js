@@ -1518,9 +1518,17 @@
   // src/why-cards-converge.js
   var MOBILE_BREAKPOINT2 = 767;
   var MOBILE_CARD_SCALE = 0.6;
-  var MOBILE_ENTER_DURATION = 1.2;
+  var CORNER_JITTER = 12;
+  var FADE_START = 0.5;
+  var FADE_END = 0.85;
+  var SHRINK_AMOUNT = 0.15;
+  var DESKTOP_SHRINK_AMOUNT = 0.25;
+  var SMOOTH_EASE = 0.12;
   function randomBetween(min, max) {
     return min + Math.random() * (max - min);
+  }
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
   }
   function shuffle(array) {
     const arr = [...array];
@@ -1530,17 +1538,15 @@
     }
     return arr;
   }
-  function buildAngles(total) {
-    const corners = [45, 135, 225, 315];
-    const sides = [0, 90, 180, 270];
-    const pool = shuffle([...corners, ...sides]);
+  function pickDispersedAngles(total) {
+    const corners = shuffle([45, 135, 225, 315]);
+    const sides = shuffle([0, 90, 180, 270]);
+    const pool = [...corners, ...sides];
     const angles = [];
     for (let i = 0; i < total; i++) {
-      if (i < pool.length) {
-        angles.push(pool[i]);
-      } else {
-        angles.push(randomBetween(0, 360));
-      }
+      const base = i < pool.length ? pool[i] : randomBetween(0, 360);
+      const angle = (base + randomBetween(-CORNER_JITTER, CORNER_JITTER) + 360) % 360;
+      angles.push(angle);
     }
     return shuffle(angles);
   }
@@ -1559,18 +1565,13 @@
         item.style.setProperty("opacity", "1", "important");
       });
     }
-    function buildCardsAndUpdater(scale) {
+    function buildCardsAndUpdater(scale, shrinkAmount = SHRINK_AMOUNT) {
       const total = items.length;
       const halfW = window.innerWidth / 2;
       const halfH = window.innerHeight / 2;
-      const VISIBLE_MARGIN = 90;
-      const CUT_MARGIN = 60;
-      const MIN_ROTATE = -18;
-      const MAX_ROTATE = 18;
-      const jitter = 15;
-      const baseAngles = buildAngles(total);
+      const baseAngles = pickDispersedAngles(total);
       const cards = Array.from(items).map((item, index) => {
-        const angleDeg = baseAngles[index] + randomBetween(-jitter, jitter);
+        const angleDeg = baseAngles[index];
         const rad = angleDeg * Math.PI / 180;
         const dx = Math.cos(rad);
         const dy = Math.sin(rad);
@@ -1578,11 +1579,17 @@
           halfW / Math.max(Math.abs(dx), 1e-6),
           halfH / Math.max(Math.abs(dy), 1e-6)
         );
-        const tMin = tEdge - VISIBLE_MARGIN;
-        const tMax = tEdge + CUT_MARGIN;
+        const rect = item.getBoundingClientRect();
+        const cardOnScreenHalf = Math.max(rect.width, rect.height) * scale * 0.5;
+        const tMin = tEdge - cardOnScreenHalf * 0.2;
+        const tMax = tEdge + cardOnScreenHalf * 1.1;
         const t = randomBetween(tMin, tMax);
-        const x = dx * t;
-        const y = dy * t;
+        const screenX = dx * t;
+        const screenY = dy * t;
+        const x = screenX / scale;
+        const y = screenY / scale;
+        const MIN_ROTATE = -18;
+        const MAX_ROTATE = 18;
         const rotate = randomBetween(MIN_ROTATE, MAX_ROTATE);
         item.style.transform = `translate(-50%, -50%) scale(${scale}) translate(${x}px, ${y}px) rotate(${rotate}deg)`;
         item.style.opacity = "1";
@@ -1594,16 +1601,20 @@
           const currentX = card.x * (1 - eased);
           const currentY = card.y * (1 - eased);
           const currentRotate = card.rotate * (1 - eased);
-          card.item.style.transform = `translate(-50%, -50%) scale(${scale}) translate(${currentX}px, ${currentY}px) rotate(${currentRotate}deg)`;
-          const fadeStart = 0.45;
-          const fadeProgress = Math.max(0, (eased - fadeStart) / (1 - fadeStart));
+          const fadeProgress = clamp(
+            (eased - FADE_START) / (FADE_END - FADE_START),
+            0,
+            1
+          );
+          const currentScale = scale * (1 - shrinkAmount * fadeProgress);
+          card.item.style.transform = `translate(-50%, -50%) scale(${currentScale}) translate(${currentX}px, ${currentY}px) rotate(${currentRotate}deg)`;
           card.item.style.setProperty("opacity", `${1 - fadeProgress}`, "important");
         });
       }
       return updateCards;
     }
     function createPinnedScrollAnimation() {
-      const updateCards = buildCardsAndUpdater(1);
+      const updateCards = buildCardsAndUpdater(1, DESKTOP_SHRINK_AMOUNT);
       return ScrollTrigger.create({
         id: "why-cards-converge",
         trigger: section,
@@ -1618,34 +1629,42 @@
         onUpdate: (self) => updateCards(self.progress)
       });
     }
-    function createMobileEnterAnimation() {
-      const updateCards = buildCardsAndUpdater(MOBILE_CARD_SCALE);
+    function createScrollLinkedAnimation(scale) {
+      const updateCards = buildCardsAndUpdater(scale, SHRINK_AMOUNT);
       updateCards(0);
-      const state = { progress: 0 };
-      return ScrollTrigger.create({
-        id: "why-cards-converge-mobile-enter",
+      let targetProgress = 0;
+      let smoothProgress = 0;
+      let rafId = null;
+      function tick() {
+        smoothProgress += (targetProgress - smoothProgress) * SMOOTH_EASE;
+        updateCards(smoothProgress);
+        rafId = requestAnimationFrame(tick);
+      }
+      rafId = requestAnimationFrame(tick);
+      const trigger = ScrollTrigger.create({
+        id: "why-cards-converge-mobile-scrub",
         trigger: section,
-        start: "top top",
-        once: true,
-        onEnter: () => {
-          gsap.to(state, {
-            progress: 1,
-            duration: MOBILE_ENTER_DURATION,
-            ease: "power2.out",
-            onUpdate: () => updateCards(state.progress)
-          });
+        start: "25% top",
+        end: "75% top",
+        invalidateOnRefresh: true,
+        onUpdate: (self) => {
+          targetProgress = self.progress;
+        },
+        onKill: () => {
+          if (rafId) cancelAnimationFrame(rafId);
         }
       });
+      return trigger;
     }
     function setup() {
       if (st) {
-        st.kill();
+        (Array.isArray(st) ? st : [st]).forEach((t) => t.kill());
         st = null;
       }
       if (prefersReducedMotion()) {
         applyStaticState();
       } else if (mobileMq.matches) {
-        st = createMobileEnterAnimation();
+        st = createScrollLinkedAnimation(MOBILE_CARD_SCALE);
       } else {
         st = createPinnedScrollAnimation();
         ScrollTrigger.refresh();
@@ -1746,6 +1765,7 @@
 
   // src/what-steps-crossfade.js
   var FADE_DURATION = 0.4;
+  var MOBILE_BREAKPOINT4 = 767;
   function initWhatStepsCrossfade(root = document) {
     if (typeof ScrollTrigger === "undefined") return;
     const section = root.querySelector(".what");
@@ -1763,6 +1783,7 @@
     );
     const total = banners.length;
     if (!total) return;
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT4}px)`);
     let st = null;
     let currentActiveIndex = -1;
     let queueTarget = 0;
@@ -1871,7 +1892,7 @@
         start: "top top+=1",
         end: () => "+=" + total * window.innerHeight * 0.8,
         pin: true,
-        pinType: "transform",
+        pinType: mobileMq.matches ? "fixed" : "transform",
         pinSpacing: true,
         scrub: 0.5,
         anticipatePin: 1,
@@ -1896,11 +1917,15 @@
     }
     setup(prefersReducedMotion());
     onMotionPreferenceChange(setup);
+    mobileMq.addEventListener("change", () => {
+      if (!document.body.contains(section)) return;
+      setup(reduced);
+    });
     return st;
   }
 
   // src/slider-testimonials.js
-  var MOBILE_BREAKPOINT4 = 767;
+  var MOBILE_BREAKPOINT5 = 767;
   var DRAG_COMMIT_THRESHOLD = 60;
   var DRAG_DIRECTION_LOCK = 10;
   function initSliderTestimonials(root = document) {
@@ -1930,7 +1955,7 @@
       DURATION = reduced ? 0 : 0.6;
       EASE = reduced ? "none" : "power3.out";
     });
-    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT4}px)`);
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT5}px)`);
     const heading = section.querySelector("h2");
     if (heading) {
       if (!heading.id) heading.id = "slider-testimonials-heading";
@@ -2201,7 +2226,7 @@
   var DEPTH_SCALE = [1, 0.9, 0.78];
   var DEPTH_BG = ["#ffffff", "#f4f4f4", "#ededed"];
   var DOT_SPACING = 14;
-  var MOBILE_BREAKPOINT5 = 767;
+  var MOBILE_BREAKPOINT6 = 767;
   var THROW_DISTANCE = 600;
   var THROW_ROTATION = 14;
   var THROW_ROTATE_Y = 35;
@@ -2233,7 +2258,7 @@
       DURATION = reduced ? 0 : 0.6;
       EASE = reduced ? "none" : "power3.inOut";
     });
-    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT5}px)`);
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT6}px)`);
     const cards = items.map((item) => ({
       item,
       card: item.querySelector(".logo-card") || item,
@@ -2622,8 +2647,8 @@
   var TILT_STRENGTH = 0.6;
   var ENTRY_TILT = 35;
   var MOUSE_EASE = 0.08;
-  var MOBILE_BREAKPOINT6 = 767;
-  var MOBILE_ENTER_DURATION2 = 1.2;
+  var MOBILE_BREAKPOINT7 = 767;
+  var MOBILE_ENTER_DURATION = 1.2;
   function readTranslate(el) {
     const transform = getComputedStyle(el).transform;
     if (!transform || transform === "none") return { x: 0, y: 0 };
@@ -2661,7 +2686,7 @@
       zIndex: 1,
       transformPerspective: 1e3
     });
-    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT6}px)`);
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT7}px)`);
     let st = null;
     let rafId = null;
     let mouseController = null;
@@ -2776,7 +2801,7 @@
         onEnter: () => {
           gsap.to(state, {
             progress: 1,
-            duration: MOBILE_ENTER_DURATION2,
+            duration: MOBILE_ENTER_DURATION,
             ease: "power2.out",
             onUpdate: () => updateToolsProgress(state.progress)
           });
@@ -2812,7 +2837,7 @@
   var SLIDE_EASE = "power3.inOut";
   var UNSTOP_DELAY = 0.05;
   var WIPE_RADIUS = 24;
-  var MOBILE_BREAKPOINT7 = 767;
+  var MOBILE_BREAKPOINT8 = 767;
   function clipHidden(dir) {
     return dir > 0 ? `inset(100% 0% 0% 0% round ${WIPE_RADIUS}px)` : `inset(0% 0% 100% 0% round ${WIPE_RADIUS}px)`;
   }
@@ -2847,7 +2872,7 @@
       step,
       banner: step.querySelector(":scope > .explain-step-banner")
     }));
-    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT7}px)`);
+    const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT8}px)`);
     let st = null;
     let currentActiveIndex = -1;
     let activeTimeline = null;

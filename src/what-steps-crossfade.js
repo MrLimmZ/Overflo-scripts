@@ -3,6 +3,7 @@
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
 
 const FADE_DURATION = 0.4;
+const MOBILE_BREAKPOINT = 767;
 
 export function initWhatStepsCrossfade(root = document) {
   if (typeof ScrollTrigger === "undefined") return;
@@ -25,6 +26,8 @@ export function initWhatStepsCrossfade(root = document) {
 
   const total = banners.length;
   if (!total) return;
+
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
   let st = null;
   let currentActiveIndex = -1;
@@ -150,7 +153,7 @@ export function initWhatStepsCrossfade(root = document) {
       start: "top top+=1",
       end: () => "+=" + total * window.innerHeight * 0.8,
       pin: true,
-      pinType: "transform",
+      pinType: mobileMq.matches ? "fixed" : "transform",
       pinSpacing: true,
       scrub: 0.5,
       anticipatePin: 1,
@@ -179,6 +182,11 @@ export function initWhatStepsCrossfade(root = document) {
 
   setup(prefersReducedMotion());
   onMotionPreferenceChange(setup);
+
+  mobileMq.addEventListener("change", () => {
+    if (!document.body.contains(section)) return;
+    setup(reduced);
+  });
 
   return st;
 }

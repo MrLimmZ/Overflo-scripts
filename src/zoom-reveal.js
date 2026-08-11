@@ -70,10 +70,6 @@ export function initZoomReveal(root = document) {
     }
   }
 
-  // Positionne main/tools pour une progression donnée (0 = état de
-  // départ caché, 1 = état final révélé) — partagé entre la version
-  // desktop (pilotée par le scroll + la souris) et la version mobile
-  // (jouée une fois à l'entrée, sans souris).
   function updateToolsProgress(progress, mouseX = 0, mouseY = 0) {
     gsap.set(main, {
       rotateY: mouseX * TILT_STRENGTH * mainDepth * progress,
@@ -179,9 +175,6 @@ export function initZoomReveal(root = document) {
     return trigger;
   }
 
-  // Mobile : même effet visuel que desktop, mais joué une seule fois
-  // (pas de scrub lié au scroll, pas de parallaxe souris) au moment où
-  // la section entre dans l'écran.
   function createMobileEnterAnimation() {
     content.style.perspective = "1400px";
     updateToolsProgress(0);
