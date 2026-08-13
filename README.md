@@ -1,112 +1,111 @@
-# Overflo — Environnement de développement
+# Overflo — Development Environment
 
-Environnement de build pour le site Overflo (Webflow), basé sur **esbuild**.
-Un seul outil gère l'ensemble du pipeline : bundling des modules JavaScript,
-compilation et minification du CSS, serveur de développement local, et build
-de production.
+Build environment for the Overflo website (Webflow), powered by **esbuild**.
+A single tool handles the entire pipeline: JavaScript module bundling,
+CSS compilation and minification, local development server, and production
+builds.
 
-## Sommaire
+## Table of Contents
 
-- [Structure du projet](#structure-du-projet)
-- [Prérequis](#prérequis)
-- [Commandes](#commandes)
-- [Développement local](#développement-local)
-- [Test sur l'environnement de staging](#test-sur-lenvironnement-de-staging)
-- [Déploiement en production](#déploiement-en-production)
-- [Configuration Webflow](#configuration-webflow)
+- [Project Structure](#project-structure)
+- [Requirements](#requirements)
+- [Commands](#commands)
+- [Local Development](#local-development)
+- [Testing on Staging](#testing-on-staging)
+- [Production Deployment](#production-deployment)
+- [Webflow Configuration](#webflow-configuration)
 
-## Structure du projet
+## Project Structure
 
 ```
 Overflo/
 ├── src/
-│   ├── index.js                    Point d'entrée JavaScript
-│   ├── core.js                     Initialisation globale (Lenis, ScrollTrigger…)
-│   ├── barba.js                    Transitions de page et réinitialisation des modules
-│   ├── nav.js                      Exemple de module fonctionnel
+│   ├── index.js                    JavaScript entry point
+│   ├── core.js                     Global initialization (Lenis, ScrollTrigger…)
+│   ├── barba.js                    Page transitions and module re-initialization
+│   ├── nav.js                      Example functional module
 │   ├── utils/
-│   │   └── motion-preference.js    Détection prefers-reduced-motion
+│   │   └── motion-preference.js    prefers-reduced-motion detection
 │   └── styles/
-│       └── main.css                Point d'entrée CSS
-├── build.js                        Script esbuild (serveur dev / watch / build)
-├── purge.js                        Purge du cache jsDelivr après déploiement
+│       └── main.css                CSS entry point
+├── build.js                        esbuild script (dev server / watch / build)
+├── purge.js                        jsDelivr cache purge after deployment
 ├── package.json
-└── main.js, main.css               Fichiers générés (build)
+└── main.js, main.css               Generated files (build output)
 ```
 
-Chaque nouvelle fonctionnalité correspond à un fichier dans `src/` (par
-exemple `lightbox.js`, `quickview.js`), importé dans `src/index.js`. Si le
-module doit être réinitialisé après une navigation via Barba.js, il doit
-également être ajouté dans `reinitModules()` (`src/barba.js`).
+Each new feature corresponds to a file in `src/` (e.g. `lightbox.js`,
+`quickview.js`), imported into `src/index.js`. If the module needs to be
+re-initialized after a Barba.js page transition, it must also be added to
+`reinitModules()` (`src/barba.js`).
 
-Le projet utilise des modules ES standard (`import` / `export`) ; esbuild se
-charge du bundling.
+The project uses standard ES modules (`import` / `export`); esbuild handles
+the bundling.
 
-## Prérequis
+## Requirements
 
-- Node.js (version récente recommandée)
-- Un compte GitHub avec accès en écriture au dépôt `MrLimmZ/Overflo-scripts`
+- Node.js (recent version recommended)
+- A GitHub account with write access to the `MrLimmZ/Overflo-scripts` repository
 
-## Commandes
+## Commands
 
-| Commande            | Description                                              |
-|----------------------|-----------------------------------------------------------|
-| `npm install`         | Installe les dépendances                                  |
-| `npm run dev`          | Lance le serveur local avec rebuild automatique et CORS   |
-| `npm run build`         | Génère le build de production minifié (`main.js`, `main.css`) |
-| `npm run deploy`         | Build + commit + push + purge du cache jsDelivr           |
+| Command              | Description                                                |
+|-----------------------|--------------------------------------------------------------|
+| `npm install`          | Installs dependencies                                        |
+| `npm run dev`           | Starts the local server with automatic rebuild and CORS      |
+| `npm run build`          | Generates the minified production build (`main.js`, `main.css`) |
+| `npm run deploy`          | Build + commit + push + jsDelivr cache purge                 |
 
-## Développement local
+## Local Development
 
 ```bash
 npm run dev
 ```
 
-Sert `main.js` et `main.css` sur `http://localhost:3000`, avec les en-têtes
-CORS nécessaires pour que Webflow puisse charger ces fichiers depuis un
-autre domaine.
+Serves `main.js` and `main.css` on `http://localhost:3000`, with the CORS
+headers required for Webflow to load these files from a different domain.
 
-Le rechargement automatique est activé : à chaque sauvegarde dans `src/`,
-esbuild reconstruit le bundle et la page Webflow (dev ou staging) se
-recharge automatiquement, sans intervention manuelle.
+Automatic reload is enabled: every save in `src/` triggers an esbuild
+rebuild, and the Webflow page (dev or staging) reloads automatically, with
+no manual intervention required.
 
-Ce mécanisme repose sur l'endpoint `/esbuild` d'esbuild (Server-Sent
-Events). Le script inclus dans `webflow-head-code.html` s'y connecte
-automatiquement lorsqu'il détecte un environnement de dev ou de staging, et
-reste inactif en production (aucune requête vers jsDelivr dans ce cas).
+This mechanism relies on esbuild's `/esbuild` endpoint (Server-Sent Events).
+The script included in `webflow-head-code.html` connects to it automatically
+when it detects a dev or staging environment, and stays inactive in
+production (no request to jsDelivr in that case).
 
-## Test sur l'environnement de staging
+## Testing on Staging
 
-Pour tester les changements directement sur le domaine `.webflow.io` :
+To test changes directly on the `.webflow.io` domain:
 
 ```bash
 npx cloudflared tunnel --url http://localhost:3000
 ```
 
-Cette commande génère une URL temporaire (`https://xxx.trycloudflare.com`),
-à renseigner dans `DEV_URLS` (head et body code Webflow). Cette URL change à
-chaque lancement du tunnel, sauf en cas d'utilisation d'un tunnel nommé
-associé à un compte Cloudflare.
+This command generates a temporary URL (`https://xxx.trycloudflare.com`),
+to be added to `DEV_URLS` (Webflow head and body code). This URL changes
+every time the tunnel is restarted, unless a named tunnel linked to a
+Cloudflare account is used.
 
-## Déploiement en production
+## Production Deployment
 
 ```bash
 npm run deploy
 ```
 
-Cette commande effectue le build, commit et push les fichiers générés sur le
-dépôt `MrLimmZ/Overflo-scripts`, puis purge le cache jsDelivr afin de forcer
-la mise à jour des fichiers servis en production :
+This command builds, commits, and pushes the generated files to the
+`MrLimmZ/Overflo-scripts` repository, then purges the jsDelivr cache to
+force an update of the files served in production:
 
 - `https://cdn.jsdelivr.net/gh/MrLimmZ/Overflo-scripts@main/main.js`
 - `https://cdn.jsdelivr.net/gh/MrLimmZ/Overflo-scripts@main/main.css`
 
-## Configuration Webflow
+## Webflow Configuration
 
-Dans **Project Settings → Custom Code** :
+In **Project Settings → Custom Code**:
 
-- Coller le contenu de `webflow-head-code.html` dans **Head Code**
-- Coller le contenu de `webflow-body-code.html` dans **Footer Code**
+- Paste the contents of `webflow-head-code.html` into **Head Code**
+- Paste the contents of `webflow-body-code.html` into **Footer Code**
 
-Lors d'une session de développement local, remplacer `TON-TUNNEL-CLOUDFLARE`
-par l'URL du tunnel Cloudflare actif.
+During a local development session, replace `TON-TUNNEL-CLOUDFLARE` with the
+active Cloudflare tunnel URL.
