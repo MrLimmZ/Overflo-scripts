@@ -25,6 +25,7 @@ import { initSliderTestimonials } from "./slider-testimonials.js";
 import { initDuoSlider } from "./duo-slider.js";
 import { initZoomReveal } from "./zoom-reveal.js";
 import { initExplainSteps } from "./explain-steps.js";
+import { initHomeHeaderSnap } from "./home-header.js";
 import {
   initDecorativeVideos,
   initVideoControls,
@@ -87,6 +88,7 @@ function reinitModules(root) {
   runSchema(root);
 
   const pinTriggers = [
+    initHomeHeaderSnap(root),
     initLargeQuoteReveal(root),
     initWhyCardsConverge(root),
     initHowHorizontalScroll(root),

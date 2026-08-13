@@ -586,4 +586,7 @@ blockquote::before {
     overflow: hidden;
   }
 }
+.home-header-bg-shape {
+  inset: 0;
+}
 /*# sourceMappingURL=main.css.map */

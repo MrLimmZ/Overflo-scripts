@@ -2191,10 +2191,10 @@
     }
     function onPointerUp(e) {
       if (!dragState || e.pointerId !== dragState.pointerId) return;
-      const { deltaX, locked } = dragState;
+      const { deltaX, locked: locked2 } = dragState;
       dragState = null;
-      if (locked === "x") unlockPageScroll();
-      if (locked !== "x") return;
+      if (locked2 === "x") unlockPageScroll();
+      if (locked2 !== "x") return;
       if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD) {
         goTo(deltaX < 0 ? activeIndex + 1 : activeIndex - 1);
       } else {
@@ -2609,10 +2609,10 @@
     }
     function onPointerUp(e) {
       if (!dragState || e.pointerId !== dragState.pointerId) return;
-      const { item, deltaX, locked } = dragState;
+      const { item, deltaX, locked: locked2 } = dragState;
       dragState = null;
-      if (locked === "x") unlockPageScroll();
-      if (locked !== "x") return;
+      if (locked2 === "x") unlockPageScroll();
+      if (locked2 !== "x") return;
       if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD2) {
         goTo(activeIndex + 1, { throwSide: Math.sign(deltaX) });
       } else {
@@ -2832,7 +2832,24 @@
     return st;
   }
 
+  // src/utils/scroll-lock.js
+  var locked = false;
+  var owner = null;
+  function isScrollLocked(byOwner) {
+    return locked && owner !== byOwner;
+  }
+  function acquireScrollLock(byOwner) {
+    locked = true;
+    owner = byOwner;
+  }
+  function releaseScrollLock(byOwner) {
+    if (owner !== byOwner) return;
+    locked = false;
+    owner = null;
+  }
+
   // src/explain-steps.js
+  var OWNER_ID = "explain-steps";
   var SLIDE_DURATION = 0.7;
   var SLIDE_EASE = "power3.inOut";
   var UNSTOP_DELAY = 0.05;
@@ -2846,17 +2863,26 @@
   }
   function lenisStop() {
     var _a;
+    acquireScrollLock(OWNER_ID);
     (_a = window.lenis) == null ? void 0 : _a.stop();
   }
   function lenisStart() {
     var _a;
     (_a = window.lenis) == null ? void 0 : _a.start();
+    releaseScrollLock(OWNER_ID);
   }
   function scrollTo(y) {
     if (window.lenis) {
       window.lenis.scrollTo(y, { immediate: true });
     } else {
       window.scrollTo(0, y);
+    }
+  }
+  function setPinStackOrder(section, zIndexValue) {
+    gsap.set(section, { zIndex: zIndexValue });
+    const spacer = section.parentElement;
+    if (spacer && spacer.classList.contains("pin-spacer")) {
+      gsap.set(spacer, { zIndex: zIndexValue, position: "relative" });
     }
   }
   function initExplainSteps(root = document) {
@@ -2876,6 +2902,9 @@
     let st = null;
     let currentActiveIndex = -1;
     let activeTimeline = null;
+    let entered = false;
+    let headerOverlap = 0;
+    let bandStep = 0;
     function targetY(index, activeIndex) {
       return (index - activeIndex) * window.innerHeight;
     }
@@ -2915,6 +2944,113 @@
       setBannerStable(activeIndex);
       currentActiveIndex = activeIndex;
     }
+    function primeEntranceState() {
+      steps.forEach(({ step, banner }, index) => {
+        const y = targetY(index, -1);
+        gsap.set(step, { y });
+        if (banner) gsap.set(banner, { y: -y });
+        step.style.pointerEvents = index === 0 ? "auto" : "none";
+      });
+      setStepStacking(0, -1);
+      steps.forEach(({ banner }, index) => {
+        if (!banner) return;
+        if (index === 0) {
+          gsap.killTweensOf(banner);
+          gsap.set(banner, { opacity: 1, clipPath: clipHidden(1) });
+          banner.style.pointerEvents = "auto";
+        } else {
+          resetBannerNeutral(banner);
+        }
+      });
+      currentActiveIndex = -1;
+    }
+    function playEntranceStep() {
+      var _a;
+      if (entered) return;
+      entered = true;
+      if (mobileMq.matches || prefersReducedMotion()) {
+        setStepsImmediate(0);
+        return;
+      }
+      if (currentActiveIndex !== -1) return;
+      const incomingBanner = (_a = steps[0]) == null ? void 0 : _a.banner;
+      currentActiveIndex = 0;
+      steps.forEach(({ step }, index) => {
+        step.style.pointerEvents = index === 0 ? "auto" : "none";
+      });
+      setStepStacking(0, -1);
+      if (activeTimeline) {
+        activeTimeline.kill();
+        activeTimeline = null;
+      }
+      activeTimeline = gsap.timeline({
+        onComplete: () => {
+          activeTimeline = null;
+        }
+      });
+      steps.forEach(({ step, banner }, index) => {
+        const y = targetY(index, 0);
+        activeTimeline.to(step, { y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
+        if (banner) {
+          activeTimeline.to(banner, { y: -y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
+        }
+      });
+      if (incomingBanner) {
+        activeTimeline.to(
+          incomingBanner,
+          { clipPath: clipRevealed(), duration: SLIDE_DURATION, ease: SLIDE_EASE },
+          0
+        );
+      }
+    }
+    function playExitStep(onComplete) {
+      var _a;
+      if (!entered) {
+        onComplete == null ? void 0 : onComplete();
+        return;
+      }
+      entered = false;
+      if (currentActiveIndex !== 0 || activeTimeline) {
+        if (activeTimeline) {
+          activeTimeline.kill();
+          activeTimeline = null;
+        }
+        primeEntranceState();
+        onComplete == null ? void 0 : onComplete();
+        return;
+      }
+      const outgoingBanner = (_a = steps[0]) == null ? void 0 : _a.banner;
+      currentActiveIndex = -1;
+      steps.forEach(({ step }) => {
+        step.style.pointerEvents = "none";
+      });
+      activeTimeline = gsap.timeline({
+        onComplete: () => {
+          activeTimeline = null;
+          primeEntranceState();
+          onComplete == null ? void 0 : onComplete();
+        }
+      });
+      steps.forEach(({ step, banner }, index) => {
+        const y = targetY(index, -1);
+        activeTimeline.to(step, { y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
+        if (banner) {
+          activeTimeline.to(banner, { y: -y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
+        }
+      });
+      if (outgoingBanner) {
+        activeTimeline.to(
+          outgoingBanner,
+          { clipPath: clipHidden(1), duration: SLIDE_DURATION, ease: SLIDE_EASE },
+          0
+        );
+      }
+    }
+    section.addEventListener("home-header:enter-next", playEntranceStep);
+    section.addEventListener("home-header:enter-home", (e) => {
+      var _a;
+      playExitStep((_a = e.detail) == null ? void 0 : _a.onComplete);
+    });
     function applyStaticState() {
       if (activeTimeline) {
         activeTimeline.kill();
@@ -2925,6 +3061,7 @@
         if (banner) gsap.set(banner, { xPercent: -50, yPercent: -50 });
       });
       setStepsImmediate(total - 1);
+      entered = true;
     }
     function applyMobileFlowState() {
       if (activeTimeline) {
@@ -2943,10 +3080,14 @@
         }
       });
       currentActiveIndex = -1;
+      entered = true;
     }
     function bandCenter(trigger, stepIndex) {
-      const bandProgress = (stepIndex + 0.5) / total;
-      return trigger.start + bandProgress * (trigger.end - trigger.start);
+      if (stepIndex === 0) {
+        return trigger.start + headerOverlap / 2;
+      }
+      const bandStart = headerOverlap + (stepIndex - 1) * bandStep;
+      return trigger.start + bandStart + bandStep / 2;
     }
     function stepToward(trigger, nextIndex) {
       var _a, _b;
@@ -3015,12 +3156,20 @@
         );
       }
     }
+    function computeIndexFromProgress(trigger, progress) {
+      const totalDistance = trigger.end - trigger.start;
+      const traveled = progress * totalDistance;
+      if (traveled < headerOverlap) return 0;
+      const idx = 1 + Math.floor((traveled - headerOverlap) / bandStep);
+      return Math.min(total - 1, idx);
+    }
     function updateStep(trigger, progress, immediate = false) {
-      const targetIndex = Math.min(total - 1, Math.floor(progress * total));
+      const targetIndex = computeIndexFromProgress(trigger, progress);
       if (immediate) {
         setStepsImmediate(targetIndex);
         return;
       }
+      if (currentActiveIndex === -1) return;
       if (activeTimeline) return;
       if (targetIndex === currentActiveIndex) return;
       const dir = targetIndex > currentActiveIndex ? 1 : -1;
@@ -3029,6 +3178,9 @@
     function createScrollAnimation() {
       currentActiveIndex = -1;
       activeTimeline = null;
+      entered = false;
+      headerOverlap = Math.abs(parseFloat(section.style.marginTop)) || 0;
+      bandStep = window.innerHeight * 0.8;
       steps.forEach(({ banner }) => {
         if (banner) gsap.set(banner, { xPercent: -50, yPercent: -50 });
       });
@@ -3036,16 +3188,35 @@
         id: "explain-steps",
         trigger: section,
         start: "top top+=1",
-        end: () => "+=" + total * window.innerHeight * 0.8,
+        end: () => "+=" + (headerOverlap + Math.max(0, total - 1) * bandStep),
         pin: true,
         pinType: "transform",
         pinSpacing: true,
         scrub: 0.5,
         anticipatePin: 1,
         invalidateOnRefresh: true,
-        onUpdate: (self) => updateStep(trigger, self.progress)
+        onUpdate: (self) => updateStep(trigger, self.progress),
+        // Émis quand l'utilisateur remonte et sort de .explain par le
+        // haut — permet à d'autres modules (ex: home-header.js) de
+        // réagir précisément au franchissement du pin RÉEL, sans avoir à
+        // dupliquer/recalculer cette mesure via un second ScrollTrigger
+        // séparé sur le même élément (source d'incohérences).
+        onLeaveBack: () => {
+          section.dispatchEvent(
+            new CustomEvent("explain-steps:leave-back", { bubbles: true })
+          );
+        },
+        // Réappliqué à CHAQUE refresh (pas seulement une fois à la
+        // création) : au moment de la création, le pin-spacer généré par
+        // GSAP n'est pas encore garanti être en place/stable (il ne l'est
+        // qu'après le premier refresh du ScrollTrigger, plus tard dans
+        // barba.js via requestAnimationFrame). Sans ça, setPinStackOrder
+        // s'exécutait trop tôt et ne trouvait pas encore le vrai spacer,
+        // donc ne posait jamais le z-index dessus.
+        onRefresh: () => setPinStackOrder(section, 0)
       });
-      updateStep(trigger, trigger.progress, true);
+      setPinStackOrder(section, 0);
+      primeEntranceState();
       return trigger;
     }
     function setup() {
@@ -3073,6 +3244,316 @@
       setup();
     });
     return st;
+  }
+
+  // src/home-header.js
+  var OWNER_ID2 = "home-header-snap";
+  var BOUNDARY_TOLERANCE = 60;
+  var TOUCH_SWIPE_THRESHOLD = 40;
+  var SCROLL_DURATION = 1.6;
+  var NATIVE_SCROLL_TIMEOUT = 1800;
+  var HARD_UNLOCK_FAILSAFE = 3e3;
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+  var CONTENT_DURATION = SCROLL_DURATION * 0.55;
+  var CONTENT_EASE = "power3.inOut";
+  var CONTENT_STAGGER = 0;
+  var CONTENT_TRANSLATE_Y = 60;
+  var SHAPE_SQUARE_SIZE = 0;
+  function setPinStackOrder2(section, zIndexValue) {
+    gsap.set(section, { zIndex: zIndexValue });
+    const spacer = section.parentElement;
+    if (spacer && spacer.classList.contains("pin-spacer")) {
+      gsap.set(spacer, { zIndex: zIndexValue, position: "relative" });
+    }
+  }
+  function createHomeHeaderPin(section) {
+    const trigger = ScrollTrigger.create({
+      id: "home-header-pin",
+      trigger: section,
+      start: "top top",
+      end: () => "+=" + section.offsetHeight,
+      pin: true,
+      pinType: "transform",
+      pinSpacing: false,
+      invalidateOnRefresh: true,
+      // Réappliqué à CHAQUE refresh (pas seulement une fois à la
+      // création) : au moment de la création, le pin-spacer généré par
+      // GSAP n'est pas encore garanti être en place/stable (il ne l'est
+      // qu'après le premier refresh du ScrollTrigger). Sans ça,
+      // setPinStackOrder s'exécutait trop tôt et ne trouvait pas encore
+      // le vrai spacer de .home-header, donc ne posait jamais le
+      // z-index dessus — et .explain (son pin-spacer venant après dans
+      // le DOM) retombait sur l'empilement naturel et passait AU-DESSUS
+      // de .home-header au lieu de rester dessous. Voir le même souci,
+      // déjà traité, sur le pin de .explain dans heading-steps.js.
+      onRefresh: () => setPinStackOrder2(section, 1)
+    });
+    setPinStackOrder2(section, 1);
+    return trigger;
+  }
+  function initHomeHeaderSnap(root = document) {
+    if (typeof ScrollTrigger === "undefined") return;
+    const section = root.querySelector(".home-header");
+    if (!section) return;
+    if (section.dataset.snapInit) return;
+    section.dataset.snapInit = "1";
+    const next = section.nextElementSibling;
+    if (!next) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    function syncOverlap() {
+      gsap.set(next, { marginTop: -section.offsetHeight });
+    }
+    syncOverlap();
+    window.addEventListener("resize", syncOverlap, { signal });
+    const pinTrigger = createHomeHeaderPin(section);
+    const contentEls = Array.from(
+      section.querySelectorAll(
+        ":scope > .home-header--title, :scope > .home-header-banner, :scope > .home-header-content"
+      )
+    );
+    const shapeEl = section.querySelector(":scope > .home-header-bg-shape");
+    if (shapeEl) {
+      gsap.set(shapeEl, {
+        position: "absolute",
+        top: "50%",
+        left: "50%",
+        xPercent: -50,
+        yPercent: -50,
+        width: "100%",
+        height: "100%"
+      });
+    }
+    let locked2 = false;
+    let scrollToken = 0;
+    let nativeTimeoutId = null;
+    let nativeScrollEndHandler = null;
+    let failsafeTimeoutId = null;
+    let transitionTimeline = null;
+    let activeSide = window.scrollY <= pinTrigger.end + BOUNDARY_TOLERANCE ? "home" : "next";
+    function cleanupIfDetached() {
+      if (!document.body.contains(section)) {
+        controller.abort();
+        return true;
+      }
+      return false;
+    }
+    function isAtHomeHeaderTop() {
+      return window.scrollY <= BOUNDARY_TOLERANCE;
+    }
+    function isAtExplainTopBoundary() {
+      const explainTrigger = ScrollTrigger.getById("explain-steps");
+      if (!explainTrigger) return false;
+      return window.scrollY <= explainTrigger.start + BOUNDARY_TOLERANCE;
+    }
+    function clearWatchers() {
+      if (nativeScrollEndHandler) {
+        window.removeEventListener("scrollend", nativeScrollEndHandler);
+        nativeScrollEndHandler = null;
+      }
+      if (nativeTimeoutId) {
+        clearTimeout(nativeTimeoutId);
+        nativeTimeoutId = null;
+      }
+      if (failsafeTimeoutId) {
+        clearTimeout(failsafeTimeoutId);
+        failsafeTimeoutId = null;
+      }
+    }
+    function unlock(myToken) {
+      if (myToken !== scrollToken) return;
+      clearWatchers();
+      locked2 = false;
+      releaseScrollLock(OWNER_ID2);
+    }
+    function playTransitions(direction, onFinished) {
+      if (transitionTimeline) {
+        transitionTimeline.kill();
+        transitionTimeline = null;
+      }
+      gsap.killTweensOf(contentEls);
+      if (shapeEl) gsap.killTweensOf(shapeEl);
+      const tl = gsap.timeline({
+        onComplete: () => {
+          transitionTimeline = null;
+          onFinished == null ? void 0 : onFinished();
+        }
+      });
+      if (direction === 1) {
+        tl.to(contentEls, {
+          y: CONTENT_TRANSLATE_Y,
+          opacity: 0,
+          duration: CONTENT_DURATION,
+          ease: CONTENT_EASE,
+          stagger: CONTENT_STAGGER
+        });
+        if (shapeEl) {
+          tl.to(shapeEl, {
+            width: SHAPE_SQUARE_SIZE,
+            height: SHAPE_SQUARE_SIZE,
+            duration: CONTENT_DURATION,
+            ease: CONTENT_EASE,
+            // display:none n'est pas animable par GSAP — on l'applique
+            // une fois le scale-to-0 terminé, pour retirer la shape du
+            // rendu proprement plutôt que de la laisser à 0px (souvent
+            // suffisant visuellement, mais display:none évite tout
+            // résidu — bordure, ombre, etc. — qui resterait visible à
+            // taille nulle).
+            onComplete: () => gsap.set(shapeEl, { display: "none" })
+          });
+        }
+      } else {
+        if (shapeEl) {
+          gsap.set(shapeEl, { display: "" });
+          tl.fromTo(
+            shapeEl,
+            { width: SHAPE_SQUARE_SIZE, height: SHAPE_SQUARE_SIZE },
+            {
+              width: "100%",
+              height: "100%",
+              duration: CONTENT_DURATION,
+              ease: CONTENT_EASE
+            }
+          );
+        }
+        tl.fromTo(
+          contentEls,
+          { y: CONTENT_TRANSLATE_Y, opacity: 0 },
+          {
+            y: 0,
+            opacity: 1,
+            duration: CONTENT_DURATION,
+            ease: CONTENT_EASE,
+            stagger: CONTENT_STAGGER
+          }
+        );
+      }
+      transitionTimeline = tl;
+    }
+    function resolveScrollTarget(direction) {
+      return direction === -1 ? pinTrigger.start : pinTrigger.end;
+    }
+    function scrollToTarget(direction) {
+      clearWatchers();
+      locked2 = true;
+      activeSide = direction === 1 ? "next" : "home";
+      acquireScrollLock(OWNER_ID2);
+      const myToken = ++scrollToken;
+      let pending = 2;
+      function completeOne() {
+        pending -= 1;
+        if (pending <= 0) {
+          unlock(myToken);
+          if (direction === 1) {
+            next.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
+          }
+        }
+      }
+      playTransitions(direction, completeOne);
+      failsafeTimeoutId = setTimeout(() => unlock(myToken), HARD_UNLOCK_FAILSAFE);
+      const scrollTarget = resolveScrollTarget(direction);
+      if (window.lenis) {
+        window.lenis.scrollTo(scrollTarget, {
+          duration: SCROLL_DURATION,
+          easing: easeInOutCubic,
+          onComplete: completeOne
+        });
+        return;
+      }
+      const targetY = direction === -1 ? pinTrigger.start : pinTrigger.end;
+      window.scrollTo({ top: targetY, behavior: "smooth" });
+      if ("onscrollend" in window) {
+        nativeScrollEndHandler = () => {
+          nativeScrollEndHandler = null;
+          completeOne();
+        };
+        window.addEventListener("scrollend", nativeScrollEndHandler, { once: true });
+      } else {
+        nativeTimeoutId = setTimeout(() => {
+          nativeTimeoutId = null;
+          completeOne();
+        }, NATIVE_SCROLL_TIMEOUT);
+      }
+    }
+    function triggerLeaveToHome() {
+      if (activeSide !== "next") return;
+      if (locked2) return;
+      if (isScrollLocked(OWNER_ID2)) return;
+      locked2 = true;
+      acquireScrollLock(OWNER_ID2);
+      next.dispatchEvent(
+        new CustomEvent("home-header:enter-home", {
+          bubbles: true,
+          detail: {
+            onComplete: () => scrollToTarget(-1)
+          }
+        })
+      );
+    }
+    next.addEventListener("explain-steps:leave-back", triggerLeaveToHome, { signal });
+    function onWheel(e) {
+      if (cleanupIfDetached()) return;
+      if (prefersReducedMotion()) return;
+      if (locked2) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (e.deltaY > 0) {
+        if (isScrollLocked(OWNER_ID2)) return;
+        if (activeSide !== "home") return;
+        if (!isAtHomeHeaderTop()) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        scrollToTarget(1);
+      } else if (e.deltaY < 0) {
+        if (isScrollLocked(OWNER_ID2)) return;
+        if (activeSide !== "next") return;
+        if (!isAtExplainTopBoundary()) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        triggerLeaveToHome();
+      }
+    }
+    let touchStartY = 0;
+    function onTouchStart(e) {
+      var _a, _b;
+      if (cleanupIfDetached()) return;
+      touchStartY = (_b = (_a = e.touches[0]) == null ? void 0 : _a.clientY) != null ? _b : 0;
+    }
+    function onTouchMove(e) {
+      var _a, _b;
+      if (cleanupIfDetached()) return;
+      if (prefersReducedMotion()) return;
+      if (locked2) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      const currentY = (_b = (_a = e.touches[0]) == null ? void 0 : _a.clientY) != null ? _b : touchStartY;
+      const deltaY = touchStartY - currentY;
+      if (deltaY >= TOUCH_SWIPE_THRESHOLD) {
+        if (isScrollLocked(OWNER_ID2)) return;
+        if (activeSide !== "home") return;
+        if (!isAtHomeHeaderTop()) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        scrollToTarget(1);
+      } else if (deltaY <= -TOUCH_SWIPE_THRESHOLD) {
+        if (isScrollLocked(OWNER_ID2)) return;
+        if (activeSide !== "next") return;
+        if (!isAtExplainTopBoundary()) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        triggerLeaveToHome();
+      }
+    }
+    window.addEventListener("wheel", onWheel, { capture: true, passive: false, signal });
+    window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true, signal });
+    window.addEventListener("touchmove", onTouchMove, { capture: true, passive: false, signal });
+    return pinTrigger;
   }
 
   // src/decorative-videos.js
@@ -3311,6 +3792,7 @@
     initDuoSlider(root);
     runSchema(root);
     const pinTriggers = [
+      initHomeHeaderSnap(root),
       initLargeQuoteReveal(root),
       initWhyCardsConverge(root),
       initHowHorizontalScroll(root),
