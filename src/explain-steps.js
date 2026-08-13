@@ -529,17 +529,24 @@ export function initExplainSteps(root = document) {
       // barba.js via requestAnimationFrame). Sans ça, setPinStackOrder
       // s'exécutait trop tôt et ne trouvait pas encore le vrai spacer,
       // donc ne posait jamais le z-index dessus.
-      onRefresh: () => setPinStackOrder(section, 0),
+      onRefresh: () => setPinStackOrder(section, 1),
     });
 
-    // .explain reste DERRIÈRE .home-header (z-index plus bas). Comme
-    // GSAP enveloppe .explain dans son propre pin-spacer, il faut aussi
-    // poser ce z-index sur ce spacer (voir setPinStackOrder ci-dessus)
-    // — sinon la comparaison d'empilement réelle se fait entre les
-    // deux spacers eux-mêmes (tous deux sans z-index explicite), pas
-    // entre .explain et .home-header directement, et rien ne change
-    // visuellement peu importe la valeur posée ici seule.
-    setPinStackOrder(section, 0);
+    // .explain reste DEVANT .home-header EN PERMANENCE : ce n'est pas
+    // .home-header qui sort du viewport, c'est .explain qui arrive
+    // PAR-DESSUS elle. Comme .explain est transparente là où ses
+    // steps ne sont pas encore en vue (hors-champ en bas via
+    // primeEntranceState), .home-header reste normalement visible
+    // tant que rien n'est encore arrivé — et le step 0, en glissant
+    // vers le haut, recouvre alors .home-header comme une nouvelle
+    // couche. Comme GSAP enveloppe .explain dans son propre
+    // pin-spacer, il faut aussi poser ce z-index sur ce spacer (voir
+    // setPinStackOrder ci-dessus) — sinon la comparaison d'empilement
+    // réelle se fait entre les deux spacers eux-mêmes (tous deux sans
+    // z-index explicite), pas entre .explain et .home-header
+    // directement, et rien ne change visuellement peu importe la
+    // valeur posée ici seule.
+    setPinStackOrder(section, 1);
 
     // Positionne tout hors champ (comme si l'étape active était -1) :
     // c'est playEntranceStep() — déclenché par home-header.js — qui

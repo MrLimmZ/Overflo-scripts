@@ -12,6 +12,15 @@ const SCROLL_DURATION = 1.6;
 const NATIVE_SCROLL_TIMEOUT = 1800;
 const HARD_UNLOCK_FAILSAFE = 3000;
 
+// Même breakpoint que heading-steps.js : en dessous, .home-header
+// reste un bloc classique en flux normal, sans pin ni scroll-jacking
+// wheel/touch — .explain gère déjà son propre flux mobile classique
+// de son côté (voir applyMobileFlowState dans heading-steps.js).
+// Aucun des événements home-header:enter-next / enter-home /
+// explain-steps:leave-back n'est ni émis ni utile dans ce mode : les
+// deux sections s'affichent simplement l'une après l'autre.
+const MOBILE_BREAKPOINT = 767;
+
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
@@ -21,10 +30,24 @@ const CONTENT_EASE = "power3.inOut";
 const CONTENT_STAGGER = 0;
 const CONTENT_TRANSLATE_Y = 60;
 
-// La shape termine sa course à 0 : plus un petit carré résiduel, elle
-// disparaît complètement (voir onComplete plus bas qui bascule en
-// display:none une fois arrivée à cette taille).
-const SHAPE_SQUARE_SIZE = 0;
+// playTransitions(1, ...) enchaîne contenu (CONTENT_DURATION) PUIS
+// shape (encore CONTENT_DURATION) de façon séquentielle : la
+// transition complète dure donc 2×CONTENT_DURATION, à comparer avec
+// SCROLL_DURATION (le scroll tourne en parallèle) — c'est la plus
+// longue des deux qui détermine la fin réelle de la transition A.
+const FORWARD_TRANSITION_DURATION = Math.max(CONTENT_DURATION * 2, SCROLL_DURATION);
+// Chevauchement voulu : l'entrée de .explain démarre ce délai AVANT
+// la fin réelle de la transition de .home-header, plutôt que d'
+// attendre qu'elle soit totalement terminée.
+const ENTER_NEXT_OVERLAP = 0.6;
+
+// La shape rétrécit/regrossit désormais vers la taille RÉELLE du
+// banner du step 0 d'.explain (largeur ET hauteur, donc son ratio),
+// pas vers 0 ni vers un ratio fixe codé en dur — voir
+// getShapeTargetSize() plus bas, qui lit sa taille via
+// getBoundingClientRect() au moment de la transition. display:none
+// est appliqué une fois arrivée à cette taille (voir onComplete plus
+// bas), pour retirer la shape du rendu proprement.
 
 // GSAP enveloppe tout élément pinné dans un <div class="pin-spacer">
 // qui devient son nouveau parent direct — poser un z-index sur
@@ -46,7 +69,21 @@ function createHomeHeaderPin(section) {
     id: "home-header-pin",
     trigger: section,
     start: "top top",
-    end: () => "+=" + section.offsetHeight,
+    // Se termine en même temps que le pin d'.explain (donc à la fin
+    // du DERNIER step), pas à la hauteur propre de .home-header.
+    // Sans ça, dès qu'un stepToward() recentre le scroll sur la bande
+    // d'un step antérieur (ex: step1 -> step0 via scrollTo), la
+    // position retombe sous la hauteur de .home-header — dans sa
+    // propre plage de pin — et il se re-pin, redevenant visible
+    // ("ça remonte"). En le faisant durer aussi longtemps que le pin
+    // d'.explain, les deux se dépin ensemble, uniquement à la toute
+    // fin. Fallback sur sa propre hauteur tant que le trigger
+    // "explain-steps" n'existe pas encore (avant qu'initExplainSteps
+    // n'ait tourné, ou si .explain est absent de la page).
+    end: () => {
+      const explainTrigger = ScrollTrigger.getById("explain-steps");
+      return explainTrigger ? explainTrigger.end : "+=" + section.offsetHeight;
+    },
     pin: true,
     pinType: "transform",
     pinSpacing: false,
@@ -57,17 +94,19 @@ function createHomeHeaderPin(section) {
     // qu'après le premier refresh du ScrollTrigger). Sans ça,
     // setPinStackOrder s'exécutait trop tôt et ne trouvait pas encore
     // le vrai spacer de .home-header, donc ne posait jamais le
-    // z-index dessus — et .explain (son pin-spacer venant après dans
-    // le DOM) retombait sur l'empilement naturel et passait AU-DESSUS
-    // de .home-header au lieu de rester dessous. Voir le même souci,
-    // déjà traité, sur le pin de .explain dans heading-steps.js.
-    onRefresh: () => setPinStackOrder(section, 1),
+    // z-index dessus.
+    onRefresh: () => setPinStackOrder(section, 0),
   });
 
-  // .home-header (et son pin-spacer) passent DEVANT .explain (et le
-  // sien). C'est .home-header-bg-shape qui, en rétrécissant, dévoile
-  // .explain à travers la zone désormais transparente.
-  setPinStackOrder(section, 1);
+  // .home-header (et son pin-spacer) restent DERRIÈRE .explain (et le
+  // sien) EN PERMANENCE : ce n'est pas .home-header qui sort du
+  // viewport, c'est .explain qui arrive PAR-DESSUS elle. Comme
+  // .explain est transparente là où ses steps ne sont pas encore en
+  // vue (hors-champ en bas via primeEntranceState), on voit
+  // .home-header normalement tant que rien n'est encore arrivé —
+  // et le step 0, en glissant vers le haut, recouvre alors
+  // .home-header comme une nouvelle couche.
+  setPinStackOrder(section, 0);
 
   return trigger;
 }
@@ -87,6 +126,10 @@ export function initHomeHeaderSnap(root = document) {
   const controller = new AbortController();
   const { signal } = controller;
 
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+
+  let pinTrigger = null;
+
   // B (.explain) doit être positionnée EXACTEMENT derrière A
   // (.home-header) dès l'arrivée sur la page — pas glisser depuis le
   // bas au fil du scroll. Sans ça, avec pinSpacing:false sur le pin de
@@ -102,18 +145,33 @@ export function initHomeHeaderSnap(root = document) {
   // .explain à n'importe quel instant de son animation, puisqu'elle
   // est déjà en place derrière, et non plus en train d'arriver.
   //
-  // IMPORTANT : doit s'exécuter AVANT createHomeHeaderPin ET avant
-  // initExplainSteps (appelé juste après dans barba.js), pour que
-  // ScrollTrigger mesure les bonnes positions dès son premier refresh.
-  // Rappelé aussi au resize car la hauteur de .home-header peut varier
-  // (responsive, contenu dynamique).
+  // Sur mobile, aucun des deux n'est pinné : ce chevauchement n'a plus
+  // de raison d'être et casserait le flux normal (les deux sections se
+  // superposeraient au lieu de se suivre) — on efface donc la marge.
   function syncOverlap() {
+    if (mobileMq.matches) {
+      gsap.set(next, { clearProps: "marginTop" });
+      return;
+    }
     gsap.set(next, { marginTop: -section.offsetHeight });
   }
-  syncOverlap();
   window.addEventListener("resize", syncOverlap, { signal });
 
-  const pinTrigger = createHomeHeaderPin(section);
+  // Taille réelle (largeur ET hauteur, donc son ratio) du banner du
+  // step 0 d'.explain — c'est la cible vers laquelle .home-header-bg-
+  // shape rétrécit (aller) / d'où elle regrossit (retour), au lieu
+  // d'un 0 ou d'un ratio fixe codé en dur. getBoundingClientRect()
+  // reste fiable même si le banner est actuellement masqué via
+  // clip-path ou translaté hors-champ (ni l'un ni l'autre n'affecte
+  // sa taille de layout réelle).
+  function getShapeTargetSize() {
+    const banner =
+      next.querySelector(":scope > .explain-step:first-child > .explain-step-banner") ||
+      next.querySelector(".explain-step-banner");
+    if (!banner) return { width: 0, height: 0 };
+    const rect = banner.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  }
 
   const contentEls = Array.from(
     section.querySelectorAll(
@@ -140,8 +198,9 @@ export function initHomeHeaderSnap(root = document) {
   let nativeScrollEndHandler = null;
   let failsafeTimeoutId = null;
   let transitionTimeline = null;
+  let enterNextDelayedCall = null;
 
-  let activeSide = window.scrollY <= pinTrigger.end + BOUNDARY_TOLERANCE ? "home" : "next";
+  let activeSide = window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE ? "home" : "next";
 
   function cleanupIfDetached() {
     if (!document.body.contains(section)) {
@@ -174,6 +233,10 @@ export function initHomeHeaderSnap(root = document) {
       clearTimeout(failsafeTimeoutId);
       failsafeTimeoutId = null;
     }
+    if (enterNextDelayedCall) {
+      enterNextDelayedCall.kill();
+      enterNextDelayedCall = null;
+    }
   }
 
   function unlock(myToken) {
@@ -190,6 +253,11 @@ export function initHomeHeaderSnap(root = document) {
     }
     gsap.killTweensOf(contentEls);
     if (shapeEl) gsap.killTweensOf(shapeEl);
+
+    // Recalculée à chaque appel (pas mise en cache) : la taille du
+    // banner peut changer entre deux transitions (resize, contenu
+    // dynamique).
+    const shapeTargetSize = getShapeTargetSize();
 
     const tl = gsap.timeline({
       onComplete: () => {
@@ -208,16 +276,15 @@ export function initHomeHeaderSnap(root = document) {
       });
       if (shapeEl) {
         tl.to(shapeEl, {
-          width: SHAPE_SQUARE_SIZE,
-          height: SHAPE_SQUARE_SIZE,
+          width: shapeTargetSize.width,
+          height: shapeTargetSize.height,
           duration: CONTENT_DURATION,
           ease: CONTENT_EASE,
           // display:none n'est pas animable par GSAP — on l'applique
-          // une fois le scale-to-0 terminé, pour retirer la shape du
-          // rendu proprement plutôt que de la laisser à 0px (souvent
-          // suffisant visuellement, mais display:none évite tout
-          // résidu — bordure, ombre, etc. — qui resterait visible à
-          // taille nulle).
+          // une fois la taille cible atteinte, pour retirer la shape
+          // du rendu proprement plutôt que de la laisser affichée à
+          // la taille du banner (souvent suffisant visuellement, mais
+          // display:none évite tout résidu — bordure, ombre, etc.).
           onComplete: () => gsap.set(shapeEl, { display: "none" }),
         });
       }
@@ -229,7 +296,7 @@ export function initHomeHeaderSnap(root = document) {
         gsap.set(shapeEl, { display: "" });
         tl.fromTo(
           shapeEl,
-          { width: SHAPE_SQUARE_SIZE, height: SHAPE_SQUARE_SIZE },
+          { width: shapeTargetSize.width, height: shapeTargetSize.height },
           {
             width: "100%",
             height: "100%",
@@ -255,12 +322,15 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   function resolveScrollTarget(direction) {
-    // Symétrique dans les deux sens : on vise toujours une position
-    // numérique résolue du pin (start/end), jamais l'élément `next`
-    // directement — puisque .explain est désormais superposée à
-    // .home-header (via la marge négative ci-dessus) et non plus
-    // positionnée plus bas dans le flux du document.
-    return direction === -1 ? pinTrigger.start : pinTrigger.end;
+    // Direction -1 : toujours le vrai début du pin (pinTrigger.start,
+    // inchangé). Direction 1 : la hauteur PROPRE de .home-header
+    // (section.offsetHeight), pas pinTrigger.end — qui correspond
+    // désormais à la fin de TOUTE la séquence de steps (voir
+    // createHomeHeaderPin) et non plus à la hauteur de .home-header
+    // seule. La cible de la transition initiale A -> B doit rester la
+    // même qu'avant : juste après .home-header, au tout début du
+    // territoire des steps.
+    return direction === -1 ? pinTrigger.start : section.offsetHeight;
   }
 
   function scrollToTarget(direction) {
@@ -273,26 +343,26 @@ export function initHomeHeaderSnap(root = document) {
 
     // Note : pour direction === -1, "home-header:enter-home" a déjà
     // été dispatché et son callback attendu AVANT cet appel — voir
-    // onExplainLeaveBack ci-dessous, qui chaîne explicitement
+    // triggerLeaveToHome ci-dessus, qui chaîne explicitement
     // scrollToTarget(-1) après la fin du flow inverse de .explain.
+
+    if (direction === 1) {
+      // Déclenche la "pré-step" de .explain 0.4s AVANT la fin réelle
+      // de la transition de .home-header (voir ENTER_NEXT_OVERLAP),
+      // pour un léger chevauchement plutôt qu'un enchaînement strict
+      // l'un après l'autre.
+      const fireAt = Math.max(0, FORWARD_TRANSITION_DURATION - ENTER_NEXT_OVERLAP);
+      enterNextDelayedCall = gsap.delayedCall(fireAt, () => {
+        enterNextDelayedCall = null;
+        if (myToken !== scrollToken) return;
+        next.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
+      });
+    }
 
     let pending = 2;
     function completeOne() {
       pending -= 1;
-      if (pending <= 0) {
-        unlock(myToken);
-        if (direction === 1) {
-          // Déclenche la "pré-step" de .explain (glissement + wipe du
-          // banner du step 0, même chorégraphie qu'entre deux steps
-          // normaux) UNE FOIS que la transition de .home-header est
-          // entièrement terminée (fade du contenu ET scroll tous deux
-          // finis) — pas en même temps qu'elle démarre, sinon les
-          // deux animations se chevauchent et celle d'.explain passe
-          // inaperçue. Symétrique à "explain-steps:leave-back"
-          // (heading-steps.js), mais dans l'autre sens.
-          next.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
-        }
-      }
+      if (pending <= 0) unlock(myToken);
     }
 
     playTransitions(direction, completeOne);
@@ -310,7 +380,7 @@ export function initHomeHeaderSnap(root = document) {
       return;
     }
 
-    const targetY = direction === -1 ? pinTrigger.start : pinTrigger.end;
+    const targetY = direction === -1 ? pinTrigger.start : section.offsetHeight;
     window.scrollTo({ top: targetY, behavior: "smooth" });
 
     if ("onscrollend" in window) {
@@ -362,6 +432,7 @@ export function initHomeHeaderSnap(root = document) {
   next.addEventListener("explain-steps:leave-back", triggerLeaveToHome, { signal });
 
   function onWheel(e) {
+    if (mobileMq.matches) return;
     if (cleanupIfDetached()) return;
     if (prefersReducedMotion()) return;
 
@@ -391,11 +462,13 @@ export function initHomeHeaderSnap(root = document) {
   let touchStartY = 0;
 
   function onTouchStart(e) {
+    if (mobileMq.matches) return;
     if (cleanupIfDetached()) return;
     touchStartY = e.touches[0]?.clientY ?? 0;
   }
 
   function onTouchMove(e) {
+    if (mobileMq.matches) return;
     if (cleanupIfDetached()) return;
     if (prefersReducedMotion()) return;
 
@@ -428,6 +501,53 @@ export function initHomeHeaderSnap(root = document) {
   window.addEventListener("wheel", onWheel, { capture: true, passive: false, signal });
   window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true, signal });
   window.addEventListener("touchmove", onTouchMove, { capture: true, passive: false, signal });
+
+  // Efface tout ce que le JS a pu poser en inline (transitions
+  // shape/contenu jouées côté desktop) pour repasser sur un affichage
+  // 100% géré par le CSS mobile normal — même logique que
+  // applyMobileFlowState() dans heading-steps.js.
+  function resetToClassicMobileState() {
+    if (transitionTimeline) {
+      transitionTimeline.kill();
+      transitionTimeline = null;
+    }
+    clearWatchers();
+    locked = false;
+    releaseScrollLock(OWNER_ID);
+
+    gsap.killTweensOf(contentEls);
+    gsap.set(contentEls, { clearProps: "all" });
+
+    if (shapeEl) {
+      gsap.killTweensOf(shapeEl);
+      gsap.set(shapeEl, { clearProps: "width,height,display" });
+    }
+
+    activeSide = "home";
+  }
+
+  // Bascule pin desktop <-> flux classique mobile. Appelé au premier
+  // setup ET à chaque franchissement du breakpoint (resize/rotation).
+  function setPinMode(isMobile) {
+    if (isMobile) {
+      if (pinTrigger) {
+        pinTrigger.kill();
+        pinTrigger = null;
+      }
+      resetToClassicMobileState();
+    } else if (!pinTrigger) {
+      pinTrigger = createHomeHeaderPin(section);
+    }
+    syncOverlap();
+  }
+
+  setPinMode(mobileMq.matches);
+
+  mobileMq.addEventListener("change", () => {
+    if (cleanupIfDetached()) return;
+    setPinMode(mobileMq.matches);
+    ScrollTrigger.refresh();
+  });
 
   return pinTrigger;
 }
