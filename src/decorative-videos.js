@@ -6,6 +6,9 @@ const controllers = new Map();
 const videosById = new Map();
 let autoIdCounter = 0;
 
+const trackedButtons = new Set();
+let tickerAttached = false;
+
 function readBoolAttr(el, ...names) {
   for (const name of names) {
     const value = el.dataset[name];
@@ -97,11 +100,132 @@ function createController(video, config) {
   };
 }
 
+function isVisuallyHidden(el) {
+  let node = el.parentElement;
+  while (node && node !== document.body) {
+    const style = getComputedStyle(node);
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      parseFloat(style.opacity) <= 0.02 ||
+      node.classList.contains("is-wiping")
+    ) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function syncButtonPositions() {
+  trackedButtons.forEach((entry) => {
+    const { video, wrapper, button } = entry;
+
+    if (!document.body.contains(video)) {
+      trackedButtons.delete(entry);
+      return;
+    }
+
+    const rect = video.getBoundingClientRect();
+    const inViewport =
+      rect.bottom > 0 &&
+      rect.top < window.innerHeight &&
+      rect.right > 0 &&
+      rect.left < window.innerWidth;
+
+    const eligible =
+      inViewport && rect.width > 0 && rect.height > 0 && !isVisuallyHidden(video);
+
+    if (eligible !== entry.eligible) {
+      entry.eligible = eligible;
+      button.classList.toggle("is-visible", eligible);
+    }
+
+    const x = rect.right - button.offsetWidth / 2 + 32;
+    const y = rect.bottom - button.offsetHeight / 2 - 16;
+    wrapper.style.transform = `translate(${x}px, ${y}px)`;
+  });
+}
+
+function startPositionSync() {
+  if (tickerAttached) return;
+  tickerAttached = true;
+  gsap.ticker.add(syncButtonPositions);
+}
+
+function stopPositionSyncIfEmpty() {
+  if (trackedButtons.size === 0 && tickerAttached) {
+    gsap.ticker.remove(syncButtonPositions);
+    tickerAttached = false;
+  }
+}
+
+function attachPlayPauseButton(video, id, requested) {
+  if (!requested) return;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "video-play-pause-wrapper";
+  wrapper.style.position = "fixed";
+  wrapper.style.top = "0";
+  wrapper.style.left = "0";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "video-play-pause";
+  button.setAttribute("aria-label", "Lecture / Pause");
+  button.dataset.videoControl = id;
+  button.dataset.videoAction = "toggle";
+  button.dataset.videoAutoBound = "1";
+  button.innerHTML = `
+    <span class="icon-play" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50"><circle cx="25" cy="25" r="24" fill="var(--control-background-color, transparent)" stroke="var(--control-outline-color, transparent)" stroke-width="2"></circle><g transform="translate(20, 18)"><path d="M1 1V13L12 7L1 1Z" stroke="var(--control-icon-color, white)" stroke-width="2" stroke-linejoin="round" fill="none"></path></g></svg>
+    </span>
+    <span class="icon-pause" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50"><circle cx="25" cy="25" r="24" fill="var(--control-background-color, transparent)" stroke="var(--control-outline-color, transparent)" stroke-width="2"></circle><g transform="translate(20, 19)"><path d="M1 0V12" stroke="var(--control-icon-color, white)" stroke-width="2"></path><path d="M9 0V12" stroke="var(--control-icon-color, white)" stroke-width="2"></path></g></svg>
+    </span>
+  `;
+
+  wrapper.appendChild(button);
+  document.body.appendChild(wrapper);
+
+  button.addEventListener("click", (e) => {
+    e.preventDefault();
+    const controller = controllers.get(id);
+    controller?.toggle();
+  });
+
+  const syncPlayingState = () =>
+    button.classList.toggle("is-playing", !video.paused && !video.ended);
+  video.addEventListener("play", syncPlayingState);
+  video.addEventListener("pause", syncPlayingState);
+  video.addEventListener("ended", syncPlayingState);
+  syncPlayingState();
+
+  const entry = { video, wrapper, button, eligible: false };
+  trackedButtons.add(entry);
+  startPositionSync();
+  syncButtonPositions();
+
+  video.addEventListener(
+    "error",
+    () => {
+      trackedButtons.delete(entry);
+      wrapper.remove();
+      stopPositionSyncIfEmpty();
+    },
+    { once: true }
+  );
+}
+
 export function initDecorativeVideos(root = document) {
   const images = Array.from(root.querySelectorAll("img[data-video-source]"));
 
   controllers.clear();
   videosById.clear();
+
+  trackedButtons.forEach(({ wrapper }) => wrapper.remove());
+  trackedButtons.clear();
+  stopPositionSyncIfEmpty();
 
   if (!images.length) return;
   if (prefersReducedMotion()) return;
@@ -138,6 +262,7 @@ function swapToVideo(img, visibilityObserver) {
   const loopStart = img.dataset.videoLoopStart !== undefined ? parseFloat(img.dataset.videoLoopStart) : null;
   const loopEnd = img.dataset.videoLoopEnd !== undefined ? parseFloat(img.dataset.videoLoopEnd) : null;
   const replay = readBoolAttr(img, "videoReplay");
+  const showControls = img.dataset.videoControls === "true";
   const id = img.dataset.videoId || `video-${++autoIdCounter}`;
 
   const video = document.createElement("video");
@@ -171,6 +296,8 @@ function swapToVideo(img, visibilityObserver) {
   controllers.set(id, controller);
   videosById.set(id, video);
 
+  attachPlayPauseButton(video, id, showControls);
+
   if (trigger === "visible") {
     visibilityObserver.observe(video);
     if (autoplay) {
@@ -193,6 +320,8 @@ export function initVideoControls(root = document) {
   const buttons = Array.from(root.querySelectorAll("[data-video-control]"));
 
   buttons.forEach((btn) => {
+    if (btn.dataset.videoAutoBound === "1") return;
+
     const id = btn.dataset.videoControl;
     const action = btn.dataset.videoAction || "toggle";
     const video = videosById.get(id);
