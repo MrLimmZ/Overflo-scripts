@@ -7,7 +7,6 @@ export function initCtaParallax(root = document) {
   const layers = root.querySelectorAll(".cta-image-layer");
   if (!cta || !layers.length) return;
 
-  const speeds = [0.25, 0.45, 0.65, 0.85];
   const tweens = [];
 
   function applyStaticState() {
@@ -18,8 +17,8 @@ export function initCtaParallax(root = document) {
   }
 
   function createParallax() {
-    layers.forEach((layer, index) => {
-      const speed = speeds[index] || 0.5;
+    layers.forEach((layer) => {
+      const speed = parseFloat(layer.dataset.speed) || 0.5;
 
       const tween = gsap.fromTo(
         layer,
