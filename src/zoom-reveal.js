@@ -1,6 +1,7 @@
 // src/zoom-reveal.js
 
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
+import { getControllerForElement } from "./decorative-videos.js";
 
 const PARALLAX_STRENGTH = 3;
 const TILT_STRENGTH = 0.6;
@@ -8,12 +9,22 @@ const ENTRY_TILT = 35;
 const MOUSE_EASE = 0.08;
 const MOBILE_BREAKPOINT = 767;
 const MOBILE_ENTER_DURATION = 1.2;
+const FULL_PROGRESS_THRESHOLD = 0.999; // considéré "zoom à 100%" au-delà de ça
+const HIDDEN_PROGRESS_THRESHOLD = 0.01; // considéré "revenu au tout début" en dessous de ça
 
 function readTranslate(el) {
   const transform = getComputedStyle(el).transform;
   if (!transform || transform === "none") return { x: 0, y: 0 };
   const matrix = new DOMMatrixReadOnly(transform);
   return { x: matrix.m41, y: matrix.m42 };
+}
+
+// Trouve les vidéos "manuelles" (data-video-trigger="manual") dans la section,
+// avec leur controller associé (trigger/reset), fourni par decorative-videos.js.
+function getRevealVideoControllers(section) {
+  return Array.from(section.querySelectorAll('[data-video-trigger="manual"]'))
+    .map((el) => getControllerForElement(el))
+    .filter(Boolean);
 }
 
 export function initZoomReveal(root = document) {
@@ -58,6 +69,7 @@ export function initZoomReveal(root = document) {
   let st = null;
   let rafId = null;
   let mouseController = null;
+  let mobileVideoObserver = null;
 
   function stopMouseLoop() {
     if (mouseController) {
@@ -68,6 +80,18 @@ export function initZoomReveal(root = document) {
       cancelAnimationFrame(rafId);
       rafId = null;
     }
+  }
+
+  function stopMobileVideoSync() {
+    if (mobileVideoObserver) {
+      mobileVideoObserver.disconnect();
+      mobileVideoObserver = null;
+    }
+  }
+
+  // Remet toutes les vidéos "manuelles" à zéro (utile à chaque (re)setup)
+  function resetRevealVideos() {
+    getRevealVideoControllers(section).forEach((c) => c.reset());
   }
 
   function updateToolsProgress(progress, mouseX = 0, mouseY = 0) {
@@ -128,6 +152,29 @@ export function initZoomReveal(root = document) {
     let curMouseX = 0;
     let curMouseY = 0;
 
+    // Desktop : la vidéo se déclenche seulement au zoom 100%, et ne se reset
+    // que si on revient quasiment tout en haut (pas au moindre demi-tour).
+    let fullyRevealed = false;
+    let revealControllers = [];
+
+    function syncRevealVideos(p) {
+      if (!revealControllers.length) {
+        revealControllers = getRevealVideoControllers(section);
+        if (!revealControllers.length) return;
+      }
+
+      const isFull = p >= FULL_PROGRESS_THRESHOLD;
+      const isHidden = p <= HIDDEN_PROGRESS_THRESHOLD;
+
+      if (isFull && !fullyRevealed) {
+        fullyRevealed = true;
+        revealControllers.forEach((c) => c.trigger());
+      } else if (isHidden && fullyRevealed) {
+        fullyRevealed = false;
+        revealControllers.forEach((c) => c.reset());
+      }
+    }
+
     function tick() {
       updateToolsProgress(progress, curMouseX, curMouseY);
     }
@@ -146,6 +193,7 @@ export function initZoomReveal(root = document) {
       onUpdate: (self) => {
         progress = self.progress;
         tick();
+        syncRevealVideos(progress);
       },
     });
 
@@ -197,17 +245,68 @@ export function initZoomReveal(root = document) {
     });
   }
 
+  // Mobile : la vidéo ne se joue/réinitialise que sur un scroll vers le bas
+  // pour l'arrivée (depuis la section précédente), et un reset n'a lieu que
+  // si on quitte la section par le HAUT (retour vers la section précédente).
+  // Si on continue vers le bas puis remonte plus tard depuis une section
+  // suivante, la vidéo garde son état déjà joué, sans reset intempestif.
+  function setupMobileVideoSync() {
+    const controllerByEl = new Map();
+    section.querySelectorAll('[data-video-trigger="manual"]').forEach((el) => {
+      const controller = getControllerForElement(el);
+      if (controller) controllerByEl.set(el, controller);
+    });
+    if (!controllerByEl.size) return null;
+
+    let lastScrollY = window.scrollY;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const currentScrollY = window.scrollY;
+        const scrollingDown = currentScrollY >= lastScrollY;
+        lastScrollY = currentScrollY;
+
+        entries.forEach((entry) => {
+          const controller = controllerByEl.get(entry.target);
+          if (!controller) return;
+
+          if (entry.isIntersecting) {
+            // Déclenche seulement en arrivant depuis la section précédente
+            // (scroll vers le bas).
+            if (scrollingDown) {
+              controller.trigger();
+            }
+          } else {
+            // Reset seulement en quittant par le haut (retour vers la
+            // section précédente). Continuer vers le bas conserve l'état
+            // déjà joué de la vidéo.
+            if (!scrollingDown) {
+              controller.reset();
+            }
+          }
+        });
+      },
+      { threshold: 0.3 }
+    );
+
+    controllerByEl.forEach((_, el) => observer.observe(el));
+    return observer;
+  }
+
   function setup() {
     if (st) {
       st.kill();
       st = null;
     }
     stopMouseLoop();
+    stopMobileVideoSync();
+    resetRevealVideos();
 
     if (prefersReducedMotion()) {
       applyStaticState();
     } else if (mobileMq.matches) {
       st = createMobileEnterAnimation();
+      mobileVideoObserver = setupMobileVideoSync();
     } else {
       st = createScrollAndMouseAnimation();
       ScrollTrigger.refresh();

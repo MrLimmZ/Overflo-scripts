@@ -24,6 +24,36 @@ function readNumberAttr(el, name, fallback) {
   return Number.isNaN(num) ? fallback : num;
 }
 
+function guessVideoType(url) {
+  if (!url) return null;
+  const clean = url.split("?")[0].toLowerCase();
+  if (clean.endsWith(".webm")) return "video/webm";
+  if (clean.endsWith(".mov") || clean.endsWith(".mp4")) return 'video/mp4; codecs="hvc1"';
+  return null;
+}
+
+function primeFirstFrame(video) {
+  const attemptPrime = () => {
+    video
+      .play()
+      .then(() => {
+        video.pause();
+        video.currentTime = 0;
+      })
+      .catch(() => {});
+  };
+  if (video.readyState >= 2) {
+    attemptPrime();
+  } else {
+    video.addEventListener("loadeddata", attemptPrime, { once: true });
+  }
+}
+
+function reloadAndPrime(video) {
+  video.load();
+  primeFirstFrame(video);
+}
+
 function createController(video, config) {
   let delayTimer = null;
   let hasPlayedIntro = false;
@@ -75,7 +105,7 @@ function createController(video, config) {
       isLooping = false;
       hasPlayedIntro = false;
       video.pause();
-      video.currentTime = 0;
+      reloadAndPrime(video);
     },
     close() {
       clearDelay();
@@ -85,6 +115,7 @@ function createController(video, config) {
       video.play().catch(() => {});
     },
     pause() {
+      clearDelay();
       video.pause();
     },
     toggle() {
@@ -230,17 +261,37 @@ export function initDecorativeVideos(root = document) {
   if (!images.length) return;
   if (prefersReducedMotion()) return;
 
+  let lastScrollY = window.scrollY;
+
   const visibilityObserver = new IntersectionObserver(
     (entries) => {
+      const currentScrollY = window.scrollY;
+      const scrollingDown = currentScrollY >= lastScrollY;
+      lastScrollY = currentScrollY;
+
       entries.forEach((entry) => {
         const video = entry.target;
         if (video.dataset.videoTrigger !== "visible") return;
         if (video.dataset.videoLazy === "false") return;
 
+        const controller = getControllerForElement(video);
+
         if (entry.isIntersecting) {
-          video.play().catch(() => {});
+          if (!scrollingDown) return;
+
+          if (controller) {
+            controller.trigger();
+          } else {
+            video.play().catch(() => {});
+          }
         } else {
-          video.pause();
+          if (!scrollingDown) return;
+
+          if (controller) {
+            controller.pause();
+          } else {
+            video.pause();
+          }
         }
       });
     },
@@ -250,9 +301,28 @@ export function initDecorativeVideos(root = document) {
   images.forEach((img) => swapToVideo(img, visibilityObserver));
 }
 
+function attachVideoSources(video, { webmSrc, hevcSrc }) {
+  if (!hevcSrc) {
+    video.src = webmSrc;
+    return;
+  }
+
+  const sourceHevc = document.createElement("source");
+  sourceHevc.src = hevcSrc;
+  sourceHevc.type = guessVideoType(hevcSrc) || 'video/mp4; codecs="hvc1"';
+  video.appendChild(sourceHevc);
+
+  const sourceWebm = document.createElement("source");
+  sourceWebm.src = webmSrc;
+  sourceWebm.type = guessVideoType(webmSrc) || "video/webm";
+  video.appendChild(sourceWebm);
+}
+
 function swapToVideo(img, visibilityObserver) {
-  const src = img.dataset.videoSource;
-  if (!src) return;
+  const webmSrc = img.dataset.videoSource;
+  if (!webmSrc) return;
+
+  const hevcSrc = img.dataset.videoSourceHevc || null;
 
   const trigger = img.dataset.videoTrigger === "manual" ? "manual" : "visible";
   const autoplay = readBoolAttr(img, "videoAutoplay");
@@ -266,13 +336,13 @@ function swapToVideo(img, visibilityObserver) {
   const id = img.dataset.videoId || `video-${++autoIdCounter}`;
 
   const video = document.createElement("video");
-  video.src = src;
   video.poster = img.currentSrc || img.src;
   video.muted = true;
   video.playsInline = true;
   video.setAttribute("aria-hidden", "true");
   video.dataset.videoTrigger = trigger;
   video.dataset.videoLazy = String(lazy);
+  video.dataset.controllerId = id;
 
   video.loop = nativeLoop && loopStart == null && loopEnd == null;
 
@@ -282,6 +352,11 @@ function swapToVideo(img, visibilityObserver) {
     if (key.startsWith("video")) return;
     video.dataset[key] = value;
   });
+
+  attachVideoSources(video, { webmSrc, hevcSrc });
+
+  video.preload = "auto";
+  reloadAndPrime(video);
 
   video.addEventListener("error", () => {
     controllers.delete(id);
@@ -304,7 +379,7 @@ function swapToVideo(img, visibilityObserver) {
       video.addEventListener(
         "canplay",
         () => {
-          video.play().catch(() => {});
+          controller.trigger();
         },
         { once: true }
       );
@@ -314,6 +389,11 @@ function swapToVideo(img, visibilityObserver) {
 
 export function getVideoController(id) {
   return controllers.get(id);
+}
+
+export function getControllerForElement(el) {
+  const id = el?.dataset?.controllerId;
+  return id ? controllers.get(id) : null;
 }
 
 export function initVideoControls(root = document) {
