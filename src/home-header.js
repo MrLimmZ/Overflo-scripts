@@ -2,7 +2,7 @@
 
 import { prefersReducedMotion } from "./utils/motion-preference.js";
 import { isScrollLocked, acquireScrollLock, releaseScrollLock } from "./utils/scroll-lock.js";
-import { setShapeFollower } from "./utils/shape-follow.js";
+import { setShapeFollower, clearShapeFollower } from "./utils/shape-follow.js";
 
 const OWNER_ID = "home-header-snap";
 
@@ -11,18 +11,11 @@ const TOUCH_SWIPE_THRESHOLD = 40;
 const MOBILE_BREAKPOINT = 767;
 
 const SCROLL_DURATION = 1.6;
-const NATIVE_SCROLL_TIMEOUT = 1800;
 const HARD_UNLOCK_FAILSAFE = 3000;
 
 const CONTENT_DURATION = SCROLL_DURATION * 0.35;
 const CONTENT_EASE = "power3.inOut";
 const CONTENT_TRANSLATE_Y = 20;
-const RETURN_CONTENT_OVERLAP = 0.6;
-const ENTER_NEXT_OVERLAP = 0.3;
-
-function easeInOutCubic(t) {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}
 
 function setPinStackOrder(section, zIndexValue) {
   gsap.set(section, { zIndex: zIndexValue });
@@ -81,7 +74,9 @@ export function initHomeHeaderSnap(root = document) {
       next.querySelector(
         ":scope > .explain--content > .explain-step:first-child > .explain-step-banner"
       ) || next.querySelector(".explain-step-banner");
-    if (!banner) return { width: 0, height: 0, borderRadius: "0px" };
+    if (!banner) {
+      return { width: 0, height: 0, borderRadius: "0px" };
+    }
     const rect = banner.getBoundingClientRect();
     const borderRadius = getComputedStyle(banner).borderRadius;
     return { width: rect.width, height: rect.height, top: rect.top, left: rect.left, borderRadius };
@@ -99,7 +94,7 @@ export function initHomeHeaderSnap(root = document) {
     return { width: sectionHeight * aspect, height: sectionHeight };
   }
 
-  const initialShapeSize = shapeEl ? computeInitialShapeSize() : { width: 0, height: 0 };
+  let initialShapeSize = shapeEl ? computeInitialShapeSize() : { width: 0, height: 0 };
 
   if (shapeEl) {
     gsap.set(shapeEl, {
@@ -113,7 +108,7 @@ export function initHomeHeaderSnap(root = document) {
     });
   }
 
-  const initialShapeBorderRadius = shapeEl
+  let initialShapeBorderRadius = shapeEl
     ? getComputedStyle(shapeEl).borderRadius || "0px"
     : "0px";
 
@@ -132,13 +127,43 @@ export function initHomeHeaderSnap(root = document) {
 
   let pinTrigger = null;
   let locked = false;
-  let nativeTimeoutId = null;
-  let nativeScrollEndHandler = null;
   let failsafeTimeoutId = null;
   let transitionTween = null;
   let fadeInDelayedCall = null;
 
   let activeSide = window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE ? "home" : "next";
+
+  function syncInitialShapeGeometry() {
+    // Check proactif : sans lui, une instance périmée ne se détache que
+    // lorsqu'un de SES PROPRES listeners wheel/touch/keydown se déclenche
+    // par hasard — ce qui peut prendre un moment (ou ne jamais arriver
+    // avant le prochain scroll). refreshInit se déclenche à chaque
+    // ScrollTrigger.refresh(), donc systématiquement en tout début de
+    // reinitModules() suivant : ça permet à l'instance périmée de
+    // s'auto-nettoyer dès la page suivante, sans attendre une interaction.
+    if (cleanupIfDetached()) return;
+    if (!shapeEl) return;
+    initialShapeSize = computeInitialShapeSize();
+    initialShapeBorderRadius = getComputedStyle(shapeEl).borderRadius || "0px";
+    const willApply = !mobileMq.matches && activeSide === "home" && !locked;
+    if (willApply) {
+      gsap.set(shapeEl, {
+        width: initialShapeSize.width,
+        height: initialShapeSize.height,
+        top: "50%",
+        left: "50%",
+        xPercent: -50,
+        yPercent: -50,
+      });
+    }
+  }
+
+  if (typeof ScrollTrigger !== "undefined") {
+    ScrollTrigger.addEventListener("refreshInit", syncInitialShapeGeometry);
+    signal.addEventListener("abort", () => {
+      ScrollTrigger.removeEventListener("refreshInit", syncInitialShapeGeometry);
+    });
+  }
 
   function cleanupIfDetached() {
     if (!document.body.contains(section)) {
@@ -156,21 +181,13 @@ export function initHomeHeaderSnap(root = document) {
     const explainTrigger = ScrollTrigger.getById("explain-steps");
     if (explainTrigger) {
       const bandStep = window.innerHeight * 0.8;
-      const band0Center = explainTrigger.start + bandStep / 2;
-      return window.scrollY <= band0Center + BOUNDARY_TOLERANCE;
+      const band1Center = explainTrigger.start + bandStep * 1 + bandStep / 2;
+      return window.scrollY <= band1Center + BOUNDARY_TOLERANCE;
     }
     return window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE;
   }
 
   function clearWatchers() {
-    if (nativeScrollEndHandler) {
-      window.removeEventListener("scrollend", nativeScrollEndHandler);
-      nativeScrollEndHandler = null;
-    }
-    if (nativeTimeoutId) {
-      clearTimeout(nativeTimeoutId);
-      nativeTimeoutId = null;
-    }
     if (failsafeTimeoutId) {
       clearTimeout(failsafeTimeoutId);
       failsafeTimeoutId = null;
@@ -265,7 +282,9 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   setShapeFollower(applyShapeProgress);
-  signal.addEventListener("abort", () => setShapeFollower(null));
+  signal.addEventListener("abort", () => {
+    clearShapeFollower(applyShapeProgress);
+  });
 
   function playShapeGrow(onComplete) {
     if (!shapeEl) {
@@ -295,7 +314,7 @@ export function initHomeHeaderSnap(root = document) {
     activeSide = "next";
     acquireScrollLock(OWNER_ID);
 
-    let pending = 3;
+    let pending = 2;
     function completeOne() {
       pending -= 1;
       if (pending <= 0) unlock();
@@ -304,38 +323,15 @@ export function initHomeHeaderSnap(root = document) {
     playFadeOut(completeOne);
     playShapeGrow(completeOne);
 
-    const fireAt = Math.max(0, SCROLL_DURATION - ENTER_NEXT_OVERLAP);
-    gsap.delayedCall(fireAt, () => {
-      next?.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
-    });
+    next?.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
 
     failsafeTimeoutId = setTimeout(unlock, HARD_UNLOCK_FAILSAFE);
 
     const targetY = section.offsetHeight;
 
-    if (window.lenis) {
-      window.lenis.scrollTo(targetY, {
-        duration: SCROLL_DURATION,
-        easing: easeInOutCubic,
-        onComplete: completeOne,
-      });
-      return;
-    }
-
-    window.scrollTo({ top: targetY, behavior: "smooth" });
-
-    if ("onscrollend" in window) {
-      nativeScrollEndHandler = () => {
-        nativeScrollEndHandler = null;
-        completeOne();
-      };
-      window.addEventListener("scrollend", nativeScrollEndHandler, { once: true });
-    } else {
-      nativeTimeoutId = setTimeout(() => {
-        nativeTimeoutId = null;
-        completeOne();
-      }, NATIVE_SCROLL_TIMEOUT);
-    }
+    window.scrollTo(0, targetY);
+    ScrollTrigger.update();
+    if (window.lenis) window.lenis.scrollTo(targetY, { immediate: true });
   }
 
   function scrollToTop() {
@@ -345,52 +341,42 @@ export function initHomeHeaderSnap(root = document) {
 
     next?.dispatchEvent(new CustomEvent("home-header:enter-home", { bubbles: true }));
 
-    const returnFailsafe = (SCROLL_DURATION + CONTENT_DURATION + 0.5) * 1000;
+    const returnFailsafe = 4000;
     failsafeTimeoutId = setTimeout(unlock, returnFailsafe);
 
-    let pending = 3;
+    let pending = 2;
     function completeOne() {
       pending -= 1;
       if (pending <= 0) unlock();
     }
 
-    playShapeShrink(completeOne);
+    playShapeShrink();
+
+    if (fadeInDelayedCall) {
+      fadeInDelayedCall.kill();
+      fadeInDelayedCall = null;
+    }
 
     const targetY = 0;
 
-    const fireFadeInAt = Math.max(0, SCROLL_DURATION - RETURN_CONTENT_OVERLAP);
-    fadeInDelayedCall = gsap.delayedCall(fireFadeInAt, () => {
-      fadeInDelayedCall = null;
-      playFadeIn(completeOne);
-    });
+    next?.addEventListener(
+      "explain-steps:exit-fading",
+      () => {
+        playFadeIn(completeOne);
+      },
+      { once: true }
+    );
 
-    function afterScroll() {
-      completeOne();
-    }
-
-    if (window.lenis) {
-      window.lenis.scrollTo(targetY, {
-        duration: SCROLL_DURATION,
-        easing: easeInOutCubic,
-        onComplete: afterScroll,
-      });
-      return;
-    }
-
-    window.scrollTo({ top: targetY, behavior: "smooth" });
-
-    if ("onscrollend" in window) {
-      nativeScrollEndHandler = () => {
-        nativeScrollEndHandler = null;
-        afterScroll();
-      };
-      window.addEventListener("scrollend", nativeScrollEndHandler, { once: true });
-    } else {
-      nativeTimeoutId = setTimeout(() => {
-        nativeTimeoutId = null;
-        afterScroll();
-      }, NATIVE_SCROLL_TIMEOUT);
-    }
+    next?.addEventListener(
+      "explain-steps:exit-hidden",
+      () => {
+        window.scrollTo(0, targetY);
+        ScrollTrigger.update();
+        if (window.lenis) window.lenis.scrollTo(targetY, { immediate: true });
+        completeOne();
+      },
+      { once: true }
+    );
   }
 
   function onWheel(e) {

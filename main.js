@@ -437,6 +437,9 @@
     const cta = root.querySelector(".cta-section--content");
     const layers = root.querySelectorAll(".cta-image-layer");
     if (!cta || !layers.length) return;
+    const parallaxLayers = Array.from(layers).filter(
+      (layer) => layer.dataset.speed !== void 0
+    );
     const tweens = [];
     function applyStaticState() {
       tweens.forEach((tween) => {
@@ -445,10 +448,10 @@
       });
       tweens.forEach((tween) => tween.kill());
       tweens.length = 0;
-      gsap.set(layers, { yPercent: 0, scale: 1 });
+      gsap.set(parallaxLayers, { yPercent: 0, scale: 1 });
     }
     function createParallax() {
-      layers.forEach((layer) => {
+      parallaxLayers.forEach((layer) => {
         const speed = parseFloat(layer.dataset.speed) || 0.5;
         const tween = gsap.fromTo(
           layer,
@@ -1513,6 +1516,163 @@
     return st;
   }
 
+  // src/product-header-reveal.js
+  var ENTER_OFFSET = 40;
+  var STAGE_DELAY = 0.12;
+  var INNER_STAGGER = 0.05;
+  var ITEM_DURATION = 0.7;
+  var ITEM_EASE = "power3.out";
+  function initProductHeaderReveal(root = document) {
+    if (typeof gsap === "undefined") return;
+    const section = root.querySelector(".product-header");
+    if (!section) return;
+    if (section.dataset.headerRevealInit) return;
+    section.dataset.headerRevealInit = "1";
+    const items = Array.from(
+      section.querySelectorAll(".product-header-list-item")
+    );
+    if (!items.length) return;
+    const centerIndex = Math.floor((items.length - 1) / 2);
+    const groups = /* @__PURE__ */ new Map();
+    items.forEach((item, index) => {
+      const distance = Math.abs(index - centerIndex);
+      if (!groups.has(distance)) groups.set(distance, []);
+      groups.get(distance).push(item);
+    });
+    const orderedGroups = Array.from(groups.keys()).sort((a, b) => a - b).map((distance) => groups.get(distance));
+    function applyStaticState() {
+      items.forEach((item) => {
+        item.style.opacity = "1";
+      });
+    }
+    function playReveal() {
+      const tl = gsap.timeline();
+      orderedGroups.forEach((group, stageIndex) => {
+        group.forEach((item, innerIndex) => {
+          const restY = gsap.getProperty(item, "y");
+          tl.fromTo(
+            item,
+            { y: restY + ENTER_OFFSET, opacity: 0 },
+            { y: restY, opacity: 1, duration: ITEM_DURATION, ease: ITEM_EASE },
+            stageIndex * STAGE_DELAY + innerIndex * INNER_STAGGER
+          );
+        });
+      });
+      return tl;
+    }
+    if (prefersReducedMotion()) {
+      applyStaticState();
+      return;
+    }
+    gsap.set(items, { opacity: 0 });
+    playReveal();
+  }
+
+  // src/utils/scroll-reveal.js
+  var ENTER_OFFSET2 = 28;
+  var ITEM_DURATION2 = 0.6;
+  var ITEM_STAGGER = 0.1;
+  var ITEM_EASE2 = "power2.out";
+  function initFadeUpReveal(root, { sectionSelector, itemSelector, initFlag }) {
+    if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") return;
+    const section = root.querySelector(sectionSelector);
+    if (!section) return;
+    if (section.dataset[initFlag]) return;
+    section.dataset[initFlag] = "1";
+    const items = Array.from(section.querySelectorAll(itemSelector));
+    if (!items.length) return;
+    if (prefersReducedMotion()) {
+      gsap.set(items, { opacity: 1, y: 0 });
+      return;
+    }
+    const rect = section.getBoundingClientRect();
+    const alreadyInView = rect.top < window.innerHeight * 0.8;
+    if (alreadyInView) {
+      gsap.set(items, { opacity: 1, y: 0 });
+      return;
+    }
+    gsap.set(items, { opacity: 0, y: ENTER_OFFSET2 });
+    gsap.to(items, {
+      opacity: 1,
+      y: 0,
+      duration: ITEM_DURATION2,
+      ease: ITEM_EASE2,
+      stagger: ITEM_STAGGER,
+      scrollTrigger: {
+        trigger: section,
+        start: "top 80%",
+        toggleActions: "play none none none"
+      }
+    });
+  }
+
+  // src/reinsurance-reveal.js
+  function initReinsuranceReveal(root = document) {
+    initFadeUpReveal(root, {
+      sectionSelector: ".reinsurance",
+      itemSelector: ".reinsurance-card, .icon-card",
+      initFlag: "reinsuranceRevealInit"
+    });
+  }
+
+  // src/trio-reveal.js
+  function initTrioReveal(root = document) {
+    initFadeUpReveal(root, {
+      sectionSelector: ".trio",
+      itemSelector: ".trio-item",
+      initFlag: "trioRevealInit"
+    });
+  }
+
+  // src/bento-reveal.js
+  function initBentoReveal(root = document) {
+    initFadeUpReveal(root, {
+      sectionSelector: ".bento",
+      itemSelector: ".reinsurance-card",
+      initFlag: "bentoRevealInit"
+    });
+  }
+
+  // src/utils/star-rating.js
+  var DEFAULT_OPTIONS = {
+    starSelector: ".stars-list > .icon-xs",
+    fillSelector: ".star-icon-fill",
+    starsListSelector: ".stars-list",
+    ratingAttrSelector: "[data-rating]",
+    maxStars: 5
+  };
+  function getCardRating(card, options) {
+    var _a, _b;
+    const ratingHost = card.querySelector(options.ratingAttrSelector) || (((_a = card.matches) == null ? void 0 : _a.call(card, options.ratingAttrSelector)) ? card : null) || card;
+    const raw = parseFloat((_b = ratingHost.dataset) == null ? void 0 : _b.rating);
+    if (Number.isNaN(raw)) return options.maxStars;
+    return Math.min(options.maxStars, Math.max(0, raw));
+  }
+  function applyStarRatings(cards, userOptions = {}) {
+    const options = { ...DEFAULT_OPTIONS, ...userOptions };
+    const cardList = Array.from(cards);
+    cardList.forEach((card) => {
+      const rating = getCardRating(card, options);
+      const stars = Array.from(card.querySelectorAll(options.starSelector));
+      stars.forEach((starEl, index) => {
+        const fillEl = starEl.querySelector(options.fillSelector);
+        if (!fillEl) return;
+        const fillPercent = Math.round(
+          Math.max(0, Math.min(1, rating - index)) * 100
+        );
+        fillEl.style.clipPath = `inset(0 ${100 - fillPercent}% 0 0)`;
+      });
+      const starsList = card.querySelector(options.starsListSelector);
+      if (starsList) {
+        const formatted = Number.isInteger(rating) ? rating.toString() : rating.toFixed(1);
+        starsList.setAttribute(
+          "aria-label",
+          `Rating: ${formatted} out of ${options.maxStars} stars`
+        );
+      }
+    });
+  }
+
   // src/why-cards-converge.js
   var MOBILE_BREAKPOINT2 = 767;
   var MOBILE_CARD_SCALE = 0.6;
@@ -1522,6 +1682,15 @@
   var SHRINK_AMOUNT = 0.15;
   var DESKTOP_SHRINK_AMOUNT = 0.25;
   var SMOOTH_EASE = 0.12;
+  var ENTRY_HOLD_RATIO = 0.08;
+  var EXIT_HOLD_RATIO = 0.08;
+  var SCRUB_SMOOTHING = 1.2;
+  var SCROLL_RESISTANCE = 2.2;
+  function remapToActiveZone(progress) {
+    if (progress <= ENTRY_HOLD_RATIO) return 0;
+    if (progress >= 1 - EXIT_HOLD_RATIO) return 1;
+    return (progress - ENTRY_HOLD_RATIO) / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO);
+  }
   function randomBetween(min, max) {
     return min + Math.random() * (max - min);
   }
@@ -1555,6 +1724,7 @@
     if (!section || !items.length) return;
     if (section.dataset.convergeInit) return;
     section.dataset.convergeInit = "1";
+    applyStarRatings(items);
     const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT2}px)`);
     let st = null;
     function applyStaticState() {
@@ -1613,18 +1783,24 @@
     }
     function createPinnedScrollAnimation() {
       const updateCards = buildCardsAndUpdater(1, DESKTOP_SHRINK_AMOUNT);
+      const baseDistance = window.innerHeight * 0.75;
+      let totalPinDistance = baseDistance / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO) * SCROLL_RESISTANCE;
       return ScrollTrigger.create({
         id: "why-cards-converge",
         trigger: section,
         start: "top top+=1",
-        end: () => "+=" + window.innerHeight * 0.75,
+        end: () => {
+          const distance = window.innerHeight * 0.75;
+          totalPinDistance = distance / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO) * SCROLL_RESISTANCE;
+          return "+=" + totalPinDistance;
+        },
         pin: true,
         pinType: "transform",
         pinSpacing: true,
-        scrub: 0.5,
+        scrub: SCRUB_SMOOTHING,
         anticipatePin: 1,
         invalidateOnRefresh: true,
-        onUpdate: (self) => updateCards(self.progress)
+        onUpdate: (self) => updateCards(remapToActiveZone(self.progress))
       });
     }
     function createScrollLinkedAnimation(scale) {
@@ -1665,7 +1841,6 @@
         st = createScrollLinkedAnimation(MOBILE_CARD_SCALE);
       } else {
         st = createPinnedScrollAnimation();
-        ScrollTrigger.refresh();
       }
     }
     setup();
@@ -1679,6 +1854,61 @@
 
   // src/how-horizontal-scroll.js
   var MOBILE_BREAKPOINT3 = 767;
+  var GAP_EXTRA_MAX = 40;
+  var GAP_EXTRA_MIN = -18;
+  var GAP_FLOOR_PX = 12;
+  var GAP_SMOOTH_EASE = 0.18;
+  var GAP_DECAY = 0.88;
+  var PROGRESS_TO_GAP_PX = 4e3;
+  var VELOCITY_TO_GAP_DIVISOR = 14;
+  var ENTRY_HOLD_RATIO2 = 0.08;
+  var EXIT_HOLD_RATIO2 = 0.08;
+  var SCRUB_SMOOTHING2 = 1.2;
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+  function remapToActiveZone2(progress) {
+    if (progress <= ENTRY_HOLD_RATIO2) return 0;
+    if (progress >= 1 - EXIT_HOLD_RATIO2) return 1;
+    return (progress - ENTRY_HOLD_RATIO2) / (1 - ENTRY_HOLD_RATIO2 - EXIT_HOLD_RATIO2);
+  }
+  function clamp2(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+  function lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+  function createGapInertia(list) {
+    let baseGapPx = 0;
+    let targetExtra = 0;
+    let currentExtra = 0;
+    let rafId = null;
+    function refreshBaseGap() {
+      const computed = getComputedStyle(list);
+      baseGapPx = parseFloat(computed.columnGap) || parseFloat(computed.gap) || 0;
+    }
+    function tick() {
+      currentExtra = lerp(currentExtra, targetExtra, GAP_SMOOTH_EASE);
+      targetExtra *= GAP_DECAY;
+      list.style.gap = `${Math.max(GAP_FLOOR_PX, baseGapPx + currentExtra)}px`;
+      rafId = requestAnimationFrame(tick);
+    }
+    function start() {
+      if (rafId) return;
+      rafId = requestAnimationFrame(tick);
+    }
+    function stop() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      targetExtra = 0;
+      currentExtra = 0;
+      list.style.gap = "";
+    }
+    function pushTarget(rawExtraPx) {
+      targetExtra = clamp2(rawExtraPx, GAP_EXTRA_MIN, GAP_EXTRA_MAX);
+    }
+    return { start, stop, pushTarget, refreshBaseGap };
+  }
   function initHowHorizontalScroll(root = document) {
     if (typeof ScrollTrigger === "undefined") return;
     const section = root.querySelector(".how");
@@ -1687,16 +1917,35 @@
     if (section.dataset.horizontalInit) return;
     section.dataset.horizontalInit = "1";
     const list = track.querySelector(".how-list");
+    const gapInertia = list ? createGapInertia(list) : null;
+    let listScrollHandler = null;
+    let lastProgress = 0;
     const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT3}px)`);
     let st = null;
-    const getScrollDistance = () => {
-      const rawDistance = track.scrollWidth - section.clientWidth;
+    let cachedDistance = 0;
+    function computeScrollDistance() {
+      const previousTransform = track.style.transform;
+      track.style.transform = "none";
+      const sectionRect = section.getBoundingClientRect();
+      const sectionCenterX = sectionRect.left + sectionRect.width / 2;
       const lastItem = list ? list.lastElementChild : null;
-      const lastItemWidth = lastItem ? lastItem.getBoundingClientRect().width : 0;
-      const CENTER_RATIO = 0.6;
-      const extraToCenter = (section.clientWidth - lastItemWidth) / 2 * CENTER_RATIO;
-      return Math.max(0, rawDistance + extraToCenter);
-    };
+      let distance;
+      if (lastItem) {
+        const itemRect = lastItem.getBoundingClientRect();
+        const itemCenterX = itemRect.left + itemRect.width / 2;
+        distance = itemCenterX - sectionCenterX;
+      } else {
+        distance = track.scrollWidth - section.clientWidth;
+      }
+      track.style.transform = previousTransform;
+      return Math.max(0, distance);
+    }
+    function detachListScrollHandler() {
+      if (list && listScrollHandler) {
+        list.removeEventListener("scroll", listScrollHandler);
+        listScrollHandler = null;
+      }
+    }
     function applyStaticState() {
       track.style.transform = "none";
       section.style.overflowX = "";
@@ -1709,6 +1958,27 @@
       list.setAttribute("tabindex", "0");
       list.setAttribute("role", "region");
       list.setAttribute("aria-label", "How Overflo works, scrollable steps");
+      detachListScrollHandler();
+      if (!gapInertia) return;
+      if (prefersReducedMotion()) {
+        gapInertia.stop();
+        return;
+      }
+      gapInertia.refreshBaseGap();
+      gapInertia.start();
+      let lastScrollLeft = list.scrollLeft;
+      let lastScrollTime = performance.now();
+      listScrollHandler = () => {
+        const now = performance.now();
+        const dt = (now - lastScrollTime) / 1e3;
+        if (dt > 0) {
+          const velocity = (list.scrollLeft - lastScrollLeft) / dt;
+          gapInertia.pushTarget(velocity / VELOCITY_TO_GAP_DIVISOR);
+        }
+        lastScrollLeft = list.scrollLeft;
+        lastScrollTime = now;
+      };
+      list.addEventListener("scroll", listScrollHandler, { passive: true });
     }
     function createScrollAnimation() {
       section.style.overflowX = "hidden";
@@ -1719,21 +1989,38 @@
         list.removeAttribute("role");
         list.removeAttribute("aria-label");
       }
+      detachListScrollHandler();
+      if (gapInertia) {
+        gapInertia.refreshBaseGap();
+        gapInertia.start();
+        lastProgress = 0;
+      }
+      cachedDistance = computeScrollDistance();
+      let totalPinDistance = cachedDistance / (1 - ENTRY_HOLD_RATIO2 - EXIT_HOLD_RATIO2);
       return ScrollTrigger.create({
         id: "how-horizontal-scroll",
         trigger: section,
         start: "top top+=1",
-        end: () => "+=" + getScrollDistance(),
+        end: () => {
+          cachedDistance = computeScrollDistance();
+          totalPinDistance = cachedDistance / (1 - ENTRY_HOLD_RATIO2 - EXIT_HOLD_RATIO2);
+          return "+=" + totalPinDistance;
+        },
         pin: true,
         pinType: "transform",
         pinSpacing: true,
-        scrub: 0.5,
+        scrub: SCRUB_SMOOTHING2,
         anticipatePin: 1,
         invalidateOnRefresh: true,
         onUpdate: (self) => {
-          const distance = getScrollDistance();
-          const x = -distance * self.progress;
+          const eased = easeInOutCubic(remapToActiveZone2(self.progress));
+          const x = -cachedDistance * eased;
           track.style.transform = `translateX(${x}px)`;
+          if (gapInertia) {
+            const deltaProgress = eased - lastProgress;
+            lastProgress = eased;
+            gapInertia.pushTarget(deltaProgress * PROGRESS_TO_GAP_PX);
+          }
         }
       });
     }
@@ -1749,7 +2036,6 @@
         applyStaticState();
       } else {
         st = createScrollAnimation();
-        ScrollTrigger.refresh();
       }
     }
     setup();
@@ -1926,6 +2212,8 @@
   var MOBILE_BREAKPOINT5 = 767;
   var DRAG_COMMIT_THRESHOLD = 60;
   var DRAG_DIRECTION_LOCK = 10;
+  var CONTENT_HIDE_BUFFER = 16;
+  var STAR_STAGGER = 0.06;
   function initSliderTestimonials(root = document) {
     const section = root.querySelector(".slider");
     if (!section) return;
@@ -1945,6 +2233,24 @@
     let spacing = cardWidth * 0.28;
     const DOT_SPACING2 = 14;
     const lastDistance = /* @__PURE__ */ new WeakMap();
+    const wasActiveMap = /* @__PURE__ */ new WeakMap();
+    const contents = items.map((item) => item.querySelector(".rating-content"));
+    const cards = items.map((item) => item.querySelector(".rating-card"));
+    const starIcons = items.map(
+      (item) => Array.from(item.querySelectorAll(".stars-list > .icon-xs"))
+    );
+    let contentOffsets = items.map(() => 0);
+    function computeContentOffsets() {
+      contentOffsets = items.map((item, index) => {
+        const content = contents[index];
+        const card = cards[index];
+        if (!content || !card) return 0;
+        const contentRect = content.getBoundingClientRect();
+        const cardRect = card.getBoundingClientRect();
+        const distance = cardRect.bottom - contentRect.top + CONTENT_HIDE_BUFFER;
+        return Math.max(distance, 0);
+      });
+    }
     let reduced = prefersReducedMotion();
     let DURATION = reduced ? 0 : 0.6;
     let EASE = reduced ? "none" : "power3.out";
@@ -2014,7 +2320,7 @@
     }
     function render(instant = false) {
       items.forEach((item, index) => {
-        var _a;
+        var _a, _b;
         const diff = circularDiff(index, activeIndex);
         const distance = Math.abs(diff);
         const previousDistance = (_a = lastDistance.get(item)) != null ? _a : distance;
@@ -2078,6 +2384,61 @@
         getFocusableChildren(item).forEach((el) => {
           el.tabIndex = isVisible ? 0 : -1;
         });
+        const content = contents[index];
+        const stars = starIcons[index];
+        const previouslyActive = (_b = wasActiveMap.get(item)) != null ? _b : false;
+        const hiddenY = contentOffsets[index] || 0;
+        if (content) {
+          gsap.killTweensOf(content);
+          if (stars.length) gsap.killTweensOf(stars);
+          if (instant) {
+            gsap.set(content, { y: isActive ? 0 : hiddenY });
+            if (stars.length) {
+              gsap.set(stars, {
+                opacity: isActive ? 1 : 0,
+                scale: isActive ? 1 : 0
+              });
+            }
+          } else if (isActive && !previouslyActive) {
+            const tl = gsap.timeline();
+            tl.fromTo(
+              content,
+              { y: hiddenY },
+              { y: 0, duration: DURATION, ease: EASE }
+            );
+            if (stars.length) {
+              tl.fromTo(
+                stars,
+                { opacity: 0, scale: 0 },
+                {
+                  opacity: 1,
+                  scale: 1,
+                  duration: DURATION * 0.5,
+                  ease: "back.out(1.7)",
+                  stagger: STAR_STAGGER
+                },
+                DURATION * 0.35
+              );
+            }
+          } else if (!isActive && previouslyActive) {
+            const tl = gsap.timeline();
+            if (stars.length) {
+              tl.to(stars, {
+                opacity: 0,
+                scale: 0,
+                duration: DURATION * 0.3,
+                ease: "power1.in",
+                stagger: { each: STAR_STAGGER * 0.5, from: "end" }
+              });
+            }
+            tl.to(
+              content,
+              { y: hiddenY, duration: DURATION, ease: EASE },
+              stars.length ? DURATION * 0.15 : 0
+            );
+          }
+        }
+        wasActiveMap.set(item, isActive);
       });
       dots.forEach((dot, index) => {
         const diff = circularDiff(index, activeIndex);
@@ -2212,10 +2573,17 @@
       resizeTimer = setTimeout(() => {
         cardWidth = items[0].getBoundingClientRect().width || cardWidth;
         spacing = cardWidth * 0.28;
+        computeContentOffsets();
         render(true);
       }, 150);
     });
     gsap.set(items, { x: 0, xPercent: -50, yPercent: -50, y: 0 });
+    gsap.set(contents, { y: 0 });
+    starIcons.forEach((stars) => {
+      if (stars.length) gsap.set(stars, { opacity: 1, scale: 1 });
+    });
+    applyStarRatings(items);
+    computeContentOffsets();
     render(true);
   }
 
@@ -2686,7 +3054,6 @@
   }
   function createController(video, config) {
     let delayTimer = null;
-    let hasPlayedIntro = false;
     let isLooping = false;
     function clearDelay() {
       if (delayTimer) {
@@ -2703,7 +3070,6 @@
     function onEnded() {
       var _a;
       if (config.loopStart != null || config.loopEnd != null) {
-        hasPlayedIntro = true;
         isLooping = true;
         video.currentTime = (_a = config.loopStart) != null ? _a : 0;
         video.play().catch(() => {
@@ -2716,7 +3082,8 @@
       trigger() {
         clearDelay();
         const start = () => {
-          if (config.replay || !hasPlayedIntro) {
+          if (video.ended) {
+            if (!config.replay) return;
             isLooping = false;
             video.currentTime = 0;
           }
@@ -2732,7 +3099,6 @@
       reset() {
         clearDelay();
         isLooping = false;
-        hasPlayedIntro = false;
         video.pause();
         reloadAndPrime(video);
       },
@@ -2859,19 +3225,14 @@
     stopPositionSyncIfEmpty();
     if (!images.length) return;
     if (prefersReducedMotion()) return;
-    let lastScrollY = window.scrollY;
     const visibilityObserver = new IntersectionObserver(
       (entries) => {
-        const currentScrollY = window.scrollY;
-        const scrollingDown = currentScrollY >= lastScrollY;
-        lastScrollY = currentScrollY;
         entries.forEach((entry) => {
           const video = entry.target;
           if (video.dataset.videoTrigger !== "visible") return;
           if (video.dataset.videoLazy === "false") return;
           const controller = getControllerForElement(video);
           if (entry.isIntersecting) {
-            if (!scrollingDown) return;
             if (controller) {
               controller.trigger();
             } else {
@@ -2879,7 +3240,6 @@
               });
             }
           } else {
-            if (!scrollingDown) return;
             if (controller) {
               controller.pause();
             } else {
@@ -2888,7 +3248,7 @@
           }
         });
       },
-      { threshold: 0.1 }
+      { threshold: 0 }
     );
     images.forEach((img) => swapToVideo(img, visibilityObserver));
   }
@@ -3325,8 +3685,13 @@
   function setShapeFollower(fn) {
     follower = fn;
   }
+  function clearShapeFollower(fn) {
+    if (follower !== fn) return;
+    follower = null;
+  }
   function reportWipeProgress(revealedFraction) {
-    follower == null ? void 0 : follower(revealedFraction);
+    if (!follower) return;
+    follower(revealedFraction);
   }
 
   // src/utils/scroll-lock.js
@@ -3344,19 +3709,23 @@
     locked = false;
     owner = null;
   }
+  function resetScrollLock() {
+    locked = false;
+    owner = null;
+  }
 
   // src/explain-steps.js
   var OWNER_ID = "explain-steps";
   var SLIDE_DURATION = 0.7;
   var SLIDE_EASE = "power3.inOut";
   var MASK_DURATION = 1.8;
+  var STEP_MASK_DURATION = 0.9;
   var MASK_EASE = "power3.inOut";
   var WIPE_RADIUS = 24;
-  var ENTRANCE_DURATION = 0.9;
-  var ENTRANCE_EASE = "power3.out";
   var UNSTOP_DELAY = 0.05;
   var GESTURE_GAP_MS = 120;
   var QUEUED_SCROLL_THRESHOLD = 15;
+  var RETURN_FADE_LEAD = 0.56;
   function lenisStop() {
     var _a;
     acquireScrollLock(OWNER_ID);
@@ -3427,7 +3796,6 @@
     }
   }
   function initExplainSteps(root = document) {
-    var _a;
     if (typeof ScrollTrigger === "undefined") return;
     const section = root.querySelector(".explain");
     if (!section) return;
@@ -3435,13 +3803,18 @@
     section.dataset.explainInit = "1";
     const contentWrapper = section.querySelector(":scope > .explain--content");
     if (!contentWrapper) return;
+    const virtualStepEl = document.createElement("div");
+    contentWrapper.appendChild(virtualStepEl);
     const stepEls = Array.from(contentWrapper.querySelectorAll(":scope > .explain-step"));
-    const total = stepEls.length;
-    if (!total) return;
-    const steps = stepEls.map((step) => ({
-      step,
-      banner: step.querySelector(":scope > .explain-step-banner")
-    }));
+    const total = stepEls.length + 1;
+    if (total < 2) return;
+    const steps = [
+      { step: virtualStepEl, banner: null },
+      ...stepEls.map((step) => ({
+        step,
+        banner: step.querySelector(":scope > .explain-step-banner")
+      }))
+    ];
     function targetY(index, activeIndex) {
       return (index - activeIndex) * window.innerHeight;
     }
@@ -3483,55 +3856,12 @@
       setBannerStable(activeIndex);
       currentActiveIndex = activeIndex;
     }
-    const firstBanner = (_a = steps[0]) == null ? void 0 : _a.banner;
-    let entranceTween = null;
-    let entranceRevealed = false;
-    function primeEntranceState() {
-      steps.forEach(({ step, banner }, index) => {
-        const y = targetY(index, 0);
-        gsap.set(step, { y });
-        if (banner) gsap.set(banner, { y: -y });
-        step.style.pointerEvents = index === 0 ? "auto" : "none";
-      });
-      setStepStacking(0, -1);
-      steps.forEach(({ banner }, index) => {
-        if (!banner) return;
-        if (index === 0) {
-          killWipeTween(banner);
-          gsap.killTweensOf(banner);
-          gsap.set(banner, { opacity: 1, clipPath: clipHidden(1) });
-          banner.style.pointerEvents = "auto";
-        } else {
-          resetBannerNeutral(banner);
-        }
-      });
-      currentActiveIndex = 0;
-      entranceRevealed = false;
-    }
-    function playEntranceReveal() {
-      if (entranceRevealed || !firstBanner) return;
-      entranceRevealed = true;
-      if (entranceTween) entranceTween.kill();
-      entranceTween = gsap.timeline({
-        onComplete: () => {
-          entranceTween = null;
-          section.dispatchEvent(
-            new CustomEvent("explain-steps:entrance-revealed", { bubbles: true })
-          );
-        }
-      });
-      tweenClipReveal(entranceTween, firstBanner, 1, 100, 0, ENTRANCE_DURATION, ENTRANCE_EASE, 0, true);
-    }
-    function playEntranceHide() {
-      if (!entranceRevealed || !firstBanner) return;
-      entranceRevealed = false;
-      if (entranceTween) entranceTween.kill();
-      entranceTween = gsap.timeline({ onComplete: () => entranceTween = null });
-      tweenClipReveal(entranceTween, firstBanner, 1, 0, 100, ENTRANCE_DURATION, ENTRANCE_EASE, 0, true);
-    }
-    section.addEventListener("home-header:enter-next", playEntranceReveal);
+    section.addEventListener("home-header:enter-next", () => {
+      if (currentActiveIndex !== 0) setStepsImmediate(0);
+      stepToward(1);
+    });
     section.addEventListener("home-header:enter-home", () => {
-      if (currentActiveIndex === 0) playEntranceHide();
+      if (currentActiveIndex === 1) stepToward(0);
     });
     let currentActiveIndex = 0;
     let activeTween = null;
@@ -3539,7 +3869,17 @@
     let queuedDelta = 0;
     let lastWheelTime = 0;
     let gestureBroken = false;
+    const controller = new AbortController();
+    const { signal } = controller;
+    function cleanupIfDetached() {
+      if (!document.body.contains(section)) {
+        controller.abort();
+        return true;
+      }
+      return false;
+    }
     function onWheel(e) {
+      if (cleanupIfDetached()) return;
       if (!locked2) return;
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -3554,51 +3894,74 @@
     }
     let touchStartY = 0;
     function onTouchStart(e) {
-      var _a2, _b;
-      touchStartY = (_b = (_a2 = e.touches[0]) == null ? void 0 : _a2.clientY) != null ? _b : 0;
+      var _a, _b;
+      if (cleanupIfDetached()) return;
+      touchStartY = (_b = (_a = e.touches[0]) == null ? void 0 : _a.clientY) != null ? _b : 0;
     }
     function onTouchMove(e) {
-      var _a2, _b;
+      var _a, _b;
+      if (cleanupIfDetached()) return;
       if (!locked2) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       const now = performance.now();
       if (now - lastWheelTime > GESTURE_GAP_MS) gestureBroken = true;
       lastWheelTime = now;
-      const currentY = (_b = (_a2 = e.touches[0]) == null ? void 0 : _a2.clientY) != null ? _b : touchStartY;
+      const currentY = (_b = (_a = e.touches[0]) == null ? void 0 : _a.clientY) != null ? _b : touchStartY;
       if (gestureBroken) queuedDelta += touchStartY - currentY;
       touchStartY = currentY;
     }
     function onKeyDown(e) {
-      if (!locked2) return;
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      if (cleanupIfDetached()) return;
+      if (locked2) {
+        e.preventDefault();
+        const now = performance.now();
+        if (now - lastWheelTime > GESTURE_GAP_MS) gestureBroken = true;
+        lastWheelTime = now;
+        if (e.key === "ArrowDown") {
+          gestureBroken = true;
+          queuedDelta += QUEUED_SCROLL_THRESHOLD;
+        } else {
+          gestureBroken = true;
+          queuedDelta -= QUEUED_SCROLL_THRESHOLD;
+        }
+        return;
+      }
+      if (isScrollLocked(OWNER_ID)) return;
       if (e.key === "ArrowDown") {
+        if (currentActiveIndex < 1 || currentActiveIndex >= total - 1) return;
         e.preventDefault();
-        gestureBroken = true;
-        queuedDelta += QUEUED_SCROLL_THRESHOLD;
-      } else if (e.key === "ArrowUp") {
+        stepToward(currentActiveIndex + 1);
+      } else {
+        if (currentActiveIndex <= 1) return;
         e.preventDefault();
-        gestureBroken = true;
-        queuedDelta -= QUEUED_SCROLL_THRESHOLD;
+        stepToward(currentActiveIndex - 1);
       }
     }
-    window.addEventListener("wheel", onWheel, { capture: true, passive: false });
-    window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
-    window.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
-    window.addEventListener("keydown", onKeyDown, { capture: true });
+    window.addEventListener("wheel", onWheel, { capture: true, passive: false, signal });
+    window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true, signal });
+    window.addEventListener("touchmove", onTouchMove, { capture: true, passive: false, signal });
+    window.addEventListener("keydown", onKeyDown, { capture: true, signal });
     function bandCenter(nextIndex) {
       return trigger.start + nextIndex * bandStep + bandStep / 2;
     }
     function stepToward(nextIndex) {
-      var _a2, _b;
+      var _a, _b;
+      const outgoingIndex = currentActiveIndex;
+      const isReturnToVirtual = outgoingIndex === 1 && nextIndex === 0;
       locked2 = true;
       queuedDelta = 0;
       lastWheelTime = performance.now();
       gestureBroken = false;
-      lenisStop();
-      const outgoingIndex = currentActiveIndex;
-      const outgoingBanner = (_a2 = steps[outgoingIndex]) == null ? void 0 : _a2.banner;
+      if (!isReturnToVirtual) {
+        lenisStop();
+      }
+      const outgoingBanner = (_a = steps[outgoingIndex]) == null ? void 0 : _a.banner;
       const incomingBanner = (_b = steps[nextIndex]) == null ? void 0 : _b.banner;
       const dir = nextIndex > outgoingIndex ? 1 : -1;
+      const isInitialReveal = outgoingIndex === 0 && nextIndex === 1;
+      const maskDuration = isInitialReveal || isReturnToVirtual ? MASK_DURATION : STEP_MASK_DURATION;
       currentActiveIndex = nextIndex;
       steps.forEach(({ step }, index) => {
         step.style.pointerEvents = index === nextIndex ? "auto" : "none";
@@ -3635,35 +3998,33 @@
           incomingBanner.style.pointerEvents = "auto";
         }
       }
-      console.log(
-        "[retour-diag] dir:",
-        dir,
-        "outgoingIndex:",
-        outgoingIndex,
-        "nextIndex:",
-        nextIndex,
-        "outgoingBanner z-index (step):",
-        outgoingBanner ? steps[outgoingIndex].step.style.zIndex : null,
-        "incomingBanner z-index (step):",
-        incomingBanner ? steps[nextIndex].step.style.zIndex : null,
-        "outgoing initial opacity/clip:",
-        outgoingBanner ? [outgoingBanner.style.opacity, outgoingBanner.style.clipPath] : null,
-        "incoming initial opacity/clip:",
-        incomingBanner ? [incomingBanner.style.opacity, incomingBanner.style.clipPath] : null
-      );
       if (activeTween) activeTween.kill();
       activeTween = gsap.timeline({
         onComplete: () => {
           activeTween = null;
           if (outgoingBanner) resetBannerNeutral(outgoingBanner);
           setStepStacking(nextIndex, -1);
-          forceScrollTo(bandCenter(nextIndex));
+          if (isInitialReveal) {
+            section.dispatchEvent(
+              new CustomEvent("explain-steps:entrance-revealed", { bubbles: true })
+            );
+          }
+          if (isReturnToVirtual) {
+            section.dispatchEvent(
+              new CustomEvent("explain-steps:exit-hidden", { bubbles: true })
+            );
+          }
+          if (nextIndex !== 0) {
+            forceScrollTo(bandCenter(nextIndex));
+          }
           const queuedDir = Math.abs(queuedDelta) >= QUEUED_SCROLL_THRESHOLD ? Math.sign(queuedDelta) : 0;
           const queuedTarget = Math.max(0, Math.min(total - 1, nextIndex + queuedDir));
           gsap.delayedCall(UNSTOP_DELAY, () => {
-            lenisStart();
+            if (!isReturnToVirtual) {
+              lenisStart();
+            }
             locked2 = false;
-            if (queuedDir !== 0 && queuedTarget !== nextIndex) {
+            if (!isInitialReveal && queuedDir !== 0 && queuedTarget !== nextIndex) {
               stepToward(queuedTarget);
             }
           });
@@ -3678,30 +4039,40 @@
       });
       if (dir > 0) {
         if (incomingBanner) {
-          tweenClipReveal(activeTween, incomingBanner, dir, 100, 0, MASK_DURATION, MASK_EASE, 0);
+          tweenClipReveal(activeTween, incomingBanner, dir, 100, 0, maskDuration, MASK_EASE, 0, isInitialReveal);
         }
         if (outgoingBanner) {
           activeTween.to(
             outgoingBanner,
-            { opacity: 0, duration: MASK_DURATION, ease: MASK_EASE },
+            { opacity: 0, duration: maskDuration, ease: MASK_EASE },
             0
           );
         }
       } else {
         if (outgoingBanner) {
-          tweenClipReveal(activeTween, outgoingBanner, 1, 0, 100, MASK_DURATION, MASK_EASE, 0);
+          tweenClipReveal(activeTween, outgoingBanner, 1, 0, 100, maskDuration, MASK_EASE, 0, isReturnToVirtual);
         }
         if (incomingBanner) {
           activeTween.to(
             incomingBanner,
-            { opacity: 1, duration: MASK_DURATION, ease: MASK_EASE },
+            { opacity: 1, duration: maskDuration, ease: MASK_EASE },
             0
+          );
+        }
+        if (isReturnToVirtual) {
+          activeTween.call(
+            () => section.dispatchEvent(
+              new CustomEvent("explain-steps:exit-fading", { bubbles: true })
+            ),
+            [],
+            Math.max(0, maskDuration - RETURN_FADE_LEAD)
           );
         }
       }
     }
     gsap.set(stepEls, { position: "absolute", inset: 0 });
-    primeEntranceState();
+    gsap.set(virtualStepEl, { position: "absolute", inset: 0 });
+    setStepsImmediate(0);
     const bandStep = window.innerHeight * 0.8;
     function computeIndexFromProgress(progress) {
       const totalDistance = bandStep * total;
@@ -3725,15 +4096,12 @@
       },
       onEnterBack: () => {
         setPinStackOrder(section, 1);
-        playEntranceReveal();
       },
       onLeave: () => setPinStackOrder(section, 0),
       onLeaveBack: () => {
         setPinStackOrder(section, 0);
-        if (currentActiveIndex === 0) {
-          if (entranceTween) entranceTween.kill();
-          entranceTween = null;
-          primeEntranceState();
+        if (!activeTween && currentActiveIndex === 0) {
+          setStepsImmediate(0);
         }
       },
       onUpdate: (self) => {
@@ -3754,16 +4122,10 @@
   var TOUCH_SWIPE_THRESHOLD = 40;
   var MOBILE_BREAKPOINT8 = 767;
   var SCROLL_DURATION = 1.6;
-  var NATIVE_SCROLL_TIMEOUT = 1800;
   var HARD_UNLOCK_FAILSAFE = 3e3;
   var CONTENT_DURATION = SCROLL_DURATION * 0.35;
   var CONTENT_EASE = "power3.inOut";
   var CONTENT_TRANSLATE_Y = 20;
-  var RETURN_CONTENT_OVERLAP = 0.6;
-  var ENTER_NEXT_OVERLAP = 0.3;
-  function easeInOutCubic(t) {
-    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-  }
   function setPinStackOrder2(section, zIndexValue) {
     gsap.set(section, { zIndex: zIndexValue });
     const spacer = section.parentElement;
@@ -3809,7 +4171,9 @@
       const banner = next.querySelector(
         ":scope > .explain--content > .explain-step:first-child > .explain-step-banner"
       ) || next.querySelector(".explain-step-banner");
-      if (!banner) return { width: 0, height: 0, borderRadius: "0px" };
+      if (!banner) {
+        return { width: 0, height: 0, borderRadius: "0px" };
+      }
       const rect = banner.getBoundingClientRect();
       const borderRadius = getComputedStyle(banner).borderRadius;
       return { width: rect.width, height: rect.height, top: rect.top, left: rect.left, borderRadius };
@@ -3824,7 +4188,7 @@
       }
       return { width: sectionHeight * aspect, height: sectionHeight };
     }
-    const initialShapeSize = shapeEl ? computeInitialShapeSize() : { width: 0, height: 0 };
+    let initialShapeSize = shapeEl ? computeInitialShapeSize() : { width: 0, height: 0 };
     if (shapeEl) {
       gsap.set(shapeEl, {
         position: "absolute",
@@ -3836,7 +4200,7 @@
         height: initialShapeSize.height
       });
     }
-    const initialShapeBorderRadius = shapeEl ? getComputedStyle(shapeEl).borderRadius || "0px" : "0px";
+    let initialShapeBorderRadius = shapeEl ? getComputedStyle(shapeEl).borderRadius || "0px" : "0px";
     const controller = new AbortController();
     const { signal } = controller;
     next == null ? void 0 : next.addEventListener(
@@ -3849,12 +4213,33 @@
     const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT8}px)`);
     let pinTrigger = null;
     let locked2 = false;
-    let nativeTimeoutId = null;
-    let nativeScrollEndHandler = null;
     let failsafeTimeoutId = null;
     let transitionTween = null;
     let fadeInDelayedCall = null;
     let activeSide = window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE ? "home" : "next";
+    function syncInitialShapeGeometry() {
+      if (cleanupIfDetached()) return;
+      if (!shapeEl) return;
+      initialShapeSize = computeInitialShapeSize();
+      initialShapeBorderRadius = getComputedStyle(shapeEl).borderRadius || "0px";
+      const willApply = !mobileMq.matches && activeSide === "home" && !locked2;
+      if (willApply) {
+        gsap.set(shapeEl, {
+          width: initialShapeSize.width,
+          height: initialShapeSize.height,
+          top: "50%",
+          left: "50%",
+          xPercent: -50,
+          yPercent: -50
+        });
+      }
+    }
+    if (typeof ScrollTrigger !== "undefined") {
+      ScrollTrigger.addEventListener("refreshInit", syncInitialShapeGeometry);
+      signal.addEventListener("abort", () => {
+        ScrollTrigger.removeEventListener("refreshInit", syncInitialShapeGeometry);
+      });
+    }
     function cleanupIfDetached() {
       if (!document.body.contains(section)) {
         controller.abort();
@@ -3869,20 +4254,12 @@
       const explainTrigger = ScrollTrigger.getById("explain-steps");
       if (explainTrigger) {
         const bandStep = window.innerHeight * 0.8;
-        const band0Center = explainTrigger.start + bandStep / 2;
-        return window.scrollY <= band0Center + BOUNDARY_TOLERANCE;
+        const band1Center = explainTrigger.start + bandStep * 1 + bandStep / 2;
+        return window.scrollY <= band1Center + BOUNDARY_TOLERANCE;
       }
       return window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE;
     }
     function clearWatchers() {
-      if (nativeScrollEndHandler) {
-        window.removeEventListener("scrollend", nativeScrollEndHandler);
-        nativeScrollEndHandler = null;
-      }
-      if (nativeTimeoutId) {
-        clearTimeout(nativeTimeoutId);
-        nativeTimeoutId = null;
-      }
       if (failsafeTimeoutId) {
         clearTimeout(failsafeTimeoutId);
         failsafeTimeoutId = null;
@@ -3965,7 +4342,9 @@
       gsap.set(shapeEl, { width, height, borderRadius, top, left, xPercent: -50, yPercent: -50 });
     }
     setShapeFollower(applyShapeProgress);
-    signal.addEventListener("abort", () => setShapeFollower(null));
+    signal.addEventListener("abort", () => {
+      clearShapeFollower(applyShapeProgress);
+    });
     function playShapeGrow(onComplete) {
       if (!shapeEl) {
         onComplete == null ? void 0 : onComplete();
@@ -3991,84 +4370,55 @@
       locked2 = true;
       activeSide = "next";
       acquireScrollLock(OWNER_ID2);
-      let pending = 3;
+      let pending = 2;
       function completeOne() {
         pending -= 1;
         if (pending <= 0) unlock();
       }
       playFadeOut(completeOne);
       playShapeGrow(completeOne);
-      const fireAt = Math.max(0, SCROLL_DURATION - ENTER_NEXT_OVERLAP);
-      gsap.delayedCall(fireAt, () => {
-        next == null ? void 0 : next.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
-      });
+      next == null ? void 0 : next.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
       failsafeTimeoutId = setTimeout(unlock, HARD_UNLOCK_FAILSAFE);
       const targetY = section.offsetHeight;
-      if (window.lenis) {
-        window.lenis.scrollTo(targetY, {
-          duration: SCROLL_DURATION,
-          easing: easeInOutCubic,
-          onComplete: completeOne
-        });
-        return;
-      }
-      window.scrollTo({ top: targetY, behavior: "smooth" });
-      if ("onscrollend" in window) {
-        nativeScrollEndHandler = () => {
-          nativeScrollEndHandler = null;
-          completeOne();
-        };
-        window.addEventListener("scrollend", nativeScrollEndHandler, { once: true });
-      } else {
-        nativeTimeoutId = setTimeout(() => {
-          nativeTimeoutId = null;
-          completeOne();
-        }, NATIVE_SCROLL_TIMEOUT);
-      }
+      window.scrollTo(0, targetY);
+      ScrollTrigger.update();
+      if (window.lenis) window.lenis.scrollTo(targetY, { immediate: true });
     }
     function scrollToTop() {
       locked2 = true;
       activeSide = "home";
       acquireScrollLock(OWNER_ID2);
       next == null ? void 0 : next.dispatchEvent(new CustomEvent("home-header:enter-home", { bubbles: true }));
-      const returnFailsafe = (SCROLL_DURATION + CONTENT_DURATION + 0.5) * 1e3;
+      const returnFailsafe = 4e3;
       failsafeTimeoutId = setTimeout(unlock, returnFailsafe);
-      let pending = 3;
+      let pending = 2;
       function completeOne() {
         pending -= 1;
         if (pending <= 0) unlock();
       }
-      playShapeShrink(completeOne);
-      const targetY = 0;
-      const fireFadeInAt = Math.max(0, SCROLL_DURATION - RETURN_CONTENT_OVERLAP);
-      fadeInDelayedCall = gsap.delayedCall(fireFadeInAt, () => {
+      playShapeShrink();
+      if (fadeInDelayedCall) {
+        fadeInDelayedCall.kill();
         fadeInDelayedCall = null;
-        playFadeIn(completeOne);
-      });
-      function afterScroll() {
-        completeOne();
       }
-      if (window.lenis) {
-        window.lenis.scrollTo(targetY, {
-          duration: SCROLL_DURATION,
-          easing: easeInOutCubic,
-          onComplete: afterScroll
-        });
-        return;
-      }
-      window.scrollTo({ top: targetY, behavior: "smooth" });
-      if ("onscrollend" in window) {
-        nativeScrollEndHandler = () => {
-          nativeScrollEndHandler = null;
-          afterScroll();
-        };
-        window.addEventListener("scrollend", nativeScrollEndHandler, { once: true });
-      } else {
-        nativeTimeoutId = setTimeout(() => {
-          nativeTimeoutId = null;
-          afterScroll();
-        }, NATIVE_SCROLL_TIMEOUT);
-      }
+      const targetY = 0;
+      next == null ? void 0 : next.addEventListener(
+        "explain-steps:exit-fading",
+        () => {
+          playFadeIn(completeOne);
+        },
+        { once: true }
+      );
+      next == null ? void 0 : next.addEventListener(
+        "explain-steps:exit-hidden",
+        () => {
+          window.scrollTo(0, targetY);
+          ScrollTrigger.update();
+          if (window.lenis) window.lenis.scrollTo(targetY, { immediate: true });
+          completeOne();
+        },
+        { once: true }
+      );
     }
     function onWheel(e) {
       if (mobileMq.matches) return;
@@ -4214,6 +4564,9 @@
     document.documentElement.toggleAttribute("data-scrollbar-false", shouldHide);
   }
   function reinitModules(root) {
+    var _a;
+    resetScrollLock();
+    (_a = window.lenis) == null ? void 0 : _a.start();
     syncScrollbarVisibility(root);
     if (typeof ScrollTrigger !== "undefined") {
       ScrollTrigger.getAll().forEach((st) => st.kill());
@@ -4238,6 +4591,10 @@
     initTestimonials(root);
     initSliderTestimonials(root);
     initDuoSlider(root);
+    initProductHeaderReveal(root);
+    initReinsuranceReveal(root);
+    initTrioReveal(root);
+    initBentoReveal(root);
     runSchema(root);
     const pinTriggers = [
       initHomeHeaderSnap(root),

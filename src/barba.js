@@ -18,6 +18,10 @@ import { runSchema } from "./schema/index.js";
 import { initLogoMarquee } from "./logo-marquee.js";
 import { initTestimonials } from "./testimonials.js";
 import { initLargeQuoteReveal } from "./large-quote.js";
+import { initProductHeaderReveal } from "./product-header-reveal.js";
+import { initReinsuranceReveal } from "./reinsurance-reveal.js";
+import { initTrioReveal } from "./trio-reveal.js";
+import { initBentoReveal } from "./bento-reveal.js";
 import { initWhyCardsConverge } from "./why-cards-converge.js";
 import { initHowHorizontalScroll } from "./how-horizontal-scroll.js";
 import { initWhatStepsCrossfade } from "./what-steps-crossfade.js";
@@ -26,6 +30,7 @@ import { initDuoSlider } from "./duo-slider.js";
 import { initZoomReveal } from "./zoom-reveal.js";
 import { initExplainSteps } from "./explain-steps.js";
 import { initHomeHeaderSnap } from "./home-header.js";
+import { resetScrollLock } from "./utils/scroll-lock.js";
 import {
   initDecorativeVideos,
   initVideoControls,
@@ -58,6 +63,9 @@ function syncScrollbarVisibility(root) {
 }
 
 function reinitModules(root) {
+  resetScrollLock();
+  window.lenis?.start();
+
   syncScrollbarVisibility(root);
 
   if (typeof ScrollTrigger !== "undefined") {
@@ -85,6 +93,10 @@ function reinitModules(root) {
   initTestimonials(root);
   initSliderTestimonials(root);
   initDuoSlider(root);
+  initProductHeaderReveal(root);
+  initReinsuranceReveal(root);
+  initTrioReveal(root);
+  initBentoReveal(root);
   runSchema(root);
 
   const pinTriggers = [

@@ -4,6 +4,74 @@ import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-p
 
 const MOBILE_BREAKPOINT = 767;
 
+const GAP_EXTRA_MAX = 40;
+const GAP_EXTRA_MIN = -18;
+const GAP_FLOOR_PX = 12;
+const GAP_SMOOTH_EASE = 0.18;
+const GAP_DECAY = 0.88;
+const PROGRESS_TO_GAP_PX = 4000;
+const VELOCITY_TO_GAP_DIVISOR = 14;
+const ENTRY_HOLD_RATIO = 0.08;
+const EXIT_HOLD_RATIO = 0.08;
+const SCRUB_SMOOTHING = 1.2;
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function remapToActiveZone(progress) {
+  if (progress <= ENTRY_HOLD_RATIO) return 0;
+  if (progress >= 1 - EXIT_HOLD_RATIO) return 1;
+  return (progress - ENTRY_HOLD_RATIO) / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function createGapInertia(list) {
+  let baseGapPx = 0;
+  let targetExtra = 0;
+  let currentExtra = 0;
+  let rafId = null;
+
+  function refreshBaseGap() {
+    const computed = getComputedStyle(list);
+    baseGapPx =
+      parseFloat(computed.columnGap) || parseFloat(computed.gap) || 0;
+  }
+
+  function tick() {
+    currentExtra = lerp(currentExtra, targetExtra, GAP_SMOOTH_EASE);
+    targetExtra *= GAP_DECAY;
+    list.style.gap = `${Math.max(GAP_FLOOR_PX, baseGapPx + currentExtra)}px`;
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function start() {
+    if (rafId) return;
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function stop() {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    targetExtra = 0;
+    currentExtra = 0;
+    list.style.gap = "";
+  }
+
+  function pushTarget(rawExtraPx) {
+    targetExtra = clamp(rawExtraPx, GAP_EXTRA_MIN, GAP_EXTRA_MAX);
+  }
+
+  return { start, stop, pushTarget, refreshBaseGap };
+}
+
 export function initHowHorizontalScroll(root = document) {
   if (typeof ScrollTrigger === "undefined") return;
 
@@ -14,31 +82,49 @@ export function initHowHorizontalScroll(root = document) {
   if (section.dataset.horizontalInit) return;
   section.dataset.horizontalInit = "1";
 
-  // C'est la LISTE (les cartes) qui doit scroller sur mobile, pas
-  // toute la section — sinon le titre .how-header (qui vit dans
-  // .how-track, à côté de .how-list) partirait avec les cartes.
   const list = track.querySelector(".how-list");
+
+  const gapInertia = list ? createGapInertia(list) : null;
+  let listScrollHandler = null;
+  let lastProgress = 0;
 
   const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
   let st = null;
+  let cachedDistance = 0;
 
-  const getScrollDistance = () => {
-    const rawDistance = track.scrollWidth - section.clientWidth;
+  function computeScrollDistance() {
+    const previousTransform = track.style.transform;
+    track.style.transform = "none";
+
+    const sectionRect = section.getBoundingClientRect();
+    const sectionCenterX = sectionRect.left + sectionRect.width / 2;
 
     const lastItem = list ? list.lastElementChild : null;
-    const lastItemWidth = lastItem ? lastItem.getBoundingClientRect().width : 0;
+    let distance;
 
-    const CENTER_RATIO = 0.6;
-    const extraToCenter = ((section.clientWidth - lastItemWidth) / 2) * CENTER_RATIO;
+    if (lastItem) {
+      const itemRect = lastItem.getBoundingClientRect();
+      const itemCenterX = itemRect.left + itemRect.width / 2;
+      distance = itemCenterX - sectionCenterX;
+    } else {
+      distance = track.scrollWidth - section.clientWidth;
+    }
 
-    return Math.max(0, rawDistance + extraToCenter);
-  };
+    track.style.transform = previousTransform;
+
+    return Math.max(0, distance);
+  }
+
+  function detachListScrollHandler() {
+    if (list && listScrollHandler) {
+      list.removeEventListener("scroll", listScrollHandler);
+      listScrollHandler = null;
+    }
+  }
 
   function applyStaticState() {
     track.style.transform = "none";
-    // Reset des styles desktop, au cas où on bascule depuis ce mode
-    // (resize/rotation traversant le seuil mobile).
     section.style.overflowX = "";
     section.removeAttribute("tabindex");
     section.removeAttribute("role");
@@ -47,17 +133,41 @@ export function initHowHorizontalScroll(root = document) {
     if (!list) return;
     list.style.overflowX = "auto";
     list.style.webkitOverflowScrolling = "touch";
-    // Rend la liste focusable : une fois focus dessus (Tab ou clic),
-    // les flèches ←/→ du clavier scrollent nativement, sans JS.
     list.setAttribute("tabindex", "0");
     list.setAttribute("role", "region");
     list.setAttribute("aria-label", "How Overflo works, scrollable steps");
+
+    detachListScrollHandler();
+
+    if (!gapInertia) return;
+
+    if (prefersReducedMotion()) {
+      gapInertia.stop();
+      return;
+    }
+
+    gapInertia.refreshBaseGap();
+    gapInertia.start();
+
+    let lastScrollLeft = list.scrollLeft;
+    let lastScrollTime = performance.now();
+
+    listScrollHandler = () => {
+      const now = performance.now();
+      const dt = (now - lastScrollTime) / 1000;
+      if (dt > 0) {
+        const velocity = (list.scrollLeft - lastScrollLeft) / dt;
+        gapInertia.pushTarget(velocity / VELOCITY_TO_GAP_DIVISOR);
+      }
+      lastScrollLeft = list.scrollLeft;
+      lastScrollTime = now;
+    };
+    list.addEventListener("scroll", listScrollHandler, { passive: true });
   }
 
   function createScrollAnimation() {
     section.style.overflowX = "hidden";
 
-    // Reset des styles mobile, au cas où on bascule depuis ce mode.
     if (list) {
       list.style.overflowX = "";
       list.style.webkitOverflowScrolling = "";
@@ -65,22 +175,44 @@ export function initHowHorizontalScroll(root = document) {
       list.removeAttribute("role");
       list.removeAttribute("aria-label");
     }
+    detachListScrollHandler();
+
+    if (gapInertia) {
+      gapInertia.refreshBaseGap();
+      gapInertia.start();
+      lastProgress = 0;
+    }
+
+    cachedDistance = computeScrollDistance();
+    let totalPinDistance =
+      cachedDistance / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO);
 
     return ScrollTrigger.create({
       id: "how-horizontal-scroll",
       trigger: section,
       start: "top top+=1",
-      end: () => "+=" + getScrollDistance(),
+      end: () => {
+        cachedDistance = computeScrollDistance();
+        totalPinDistance =
+          cachedDistance / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO);
+        return "+=" + totalPinDistance;
+      },
       pin: true,
       pinType: "transform",
       pinSpacing: true,
-      scrub: 0.5,
+      scrub: SCRUB_SMOOTHING,
       anticipatePin: 1,
       invalidateOnRefresh: true,
       onUpdate: (self) => {
-        const distance = getScrollDistance();
-        const x = -distance * self.progress;
+        const eased = easeInOutCubic(remapToActiveZone(self.progress));
+        const x = -cachedDistance * eased;
         track.style.transform = `translateX(${x}px)`;
+
+        if (gapInertia) {
+          const deltaProgress = eased - lastProgress;
+          lastProgress = eased;
+          gapInertia.pushTarget(deltaProgress * PROGRESS_TO_GAP_PX);
+        }
       },
     });
   }
@@ -98,7 +230,6 @@ export function initHowHorizontalScroll(root = document) {
       applyStaticState();
     } else {
       st = createScrollAnimation();
-      ScrollTrigger.refresh();
     }
   }
 

@@ -7,17 +7,21 @@ export function initCtaParallax(root = document) {
   const layers = root.querySelectorAll(".cta-image-layer");
   if (!cta || !layers.length) return;
 
+  const parallaxLayers = Array.from(layers).filter(
+    (layer) => layer.dataset.speed !== undefined,
+  );
+
   const tweens = [];
 
   function applyStaticState() {
     tweens.forEach((tween) => tween.scrollTrigger?.kill());
     tweens.forEach((tween) => tween.kill());
     tweens.length = 0;
-    gsap.set(layers, { yPercent: 0, scale: 1 });
+    gsap.set(parallaxLayers, { yPercent: 0, scale: 1 });
   }
 
   function createParallax() {
-    layers.forEach((layer) => {
+    parallaxLayers.forEach((layer) => {
       const speed = parseFloat(layer.dataset.speed) || 0.5;
 
       const tween = gsap.fromTo(

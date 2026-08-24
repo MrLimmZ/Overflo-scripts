@@ -1,6 +1,7 @@
 // src/why-cards-converge.js
 
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
+import { applyStarRatings } from "./utils/star-rating.js";
 
 const MOBILE_BREAKPOINT = 767;
 const MOBILE_CARD_SCALE = 0.6;
@@ -10,6 +11,16 @@ const FADE_END = 0.85;
 const SHRINK_AMOUNT = 0.15;
 const DESKTOP_SHRINK_AMOUNT = 0.25;
 const SMOOTH_EASE = 0.12;
+const ENTRY_HOLD_RATIO = 0.08;
+const EXIT_HOLD_RATIO = 0.08;
+const SCRUB_SMOOTHING = 1.2;
+const SCROLL_RESISTANCE = 2.2;
+
+function remapToActiveZone(progress) {
+  if (progress <= ENTRY_HOLD_RATIO) return 0;
+  if (progress >= 1 - EXIT_HOLD_RATIO) return 1;
+  return (progress - ENTRY_HOLD_RATIO) / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO);
+}
 
 function randomBetween(min, max) {
   return min + Math.random() * (max - min);
@@ -51,6 +62,8 @@ export function initWhyCardsConverge(root = document) {
 
   if (section.dataset.convergeInit) return; 
   section.dataset.convergeInit = "1";
+
+  applyStarRatings(items);
 
   const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
@@ -133,18 +146,29 @@ export function initWhyCardsConverge(root = document) {
   function createPinnedScrollAnimation() {
     const updateCards = buildCardsAndUpdater(1, DESKTOP_SHRINK_AMOUNT);
 
+    const baseDistance = window.innerHeight * 0.75;
+    let totalPinDistance =
+      (baseDistance / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO)) *
+      SCROLL_RESISTANCE;
+
     return ScrollTrigger.create({
       id: "why-cards-converge",
       trigger: section,
       start: "top top+=1",
-      end: () => "+=" + window.innerHeight * 0.75,
+      end: () => {
+        const distance = window.innerHeight * 0.75;
+        totalPinDistance =
+          (distance / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO)) *
+          SCROLL_RESISTANCE;
+        return "+=" + totalPinDistance;
+      },
       pin: true,
       pinType: "transform",
       pinSpacing: true,
-      scrub: 0.5,
+      scrub: SCRUB_SMOOTHING,
       anticipatePin: 1,
       invalidateOnRefresh: true,
-      onUpdate: (self) => updateCards(self.progress),
+      onUpdate: (self) => updateCards(remapToActiveZone(self.progress)),
     });
   }
 
@@ -192,7 +216,6 @@ export function initWhyCardsConverge(root = document) {
       st = createScrollLinkedAnimation(MOBILE_CARD_SCALE);
     } else {
       st = createPinnedScrollAnimation();
-      ScrollTrigger.refresh();
     }
   }
 

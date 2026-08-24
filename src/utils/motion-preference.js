@@ -1,8 +1,4 @@
 // src/utils/motion-preference.js
-// ═══════════════════════════════════════════════════════════
-// Détecte prefers-reduced-motion et permet d'y réagir en direct
-// si l'utilisateur change ce réglage pendant que l'onglet est ouvert.
-// ═══════════════════════════════════════════════════════════
 
 const query = window.matchMedia("(prefers-reduced-motion: reduce)");
 

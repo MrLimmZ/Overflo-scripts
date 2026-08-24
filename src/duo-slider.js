@@ -15,9 +15,9 @@ const THROW_ROTATE_Y = 35;
 const THROW_LIFT = 90;
 
 // --- Réglages du drag (mobile uniquement) ----------------------------------
-const DRAG_COMMIT_THRESHOLD = 70; // px à parcourir pour valider le swipe
-const DRAG_DIRECTION_LOCK = 10; // px avant de trancher "swipe horizontal" vs "scroll vertical"
-const DRAG_ROTATION_FACTOR = 0.04; // inclinaison pendant le drag, proportionnelle au déplacement
+const DRAG_COMMIT_THRESHOLD = 70;
+const DRAG_DIRECTION_LOCK = 10;
+const DRAG_ROTATION_FACTOR = 0.04;
 
 export function initDuoSlider(root = document) {
   const section = root.querySelector(".duo-slider");
@@ -37,9 +37,6 @@ export function initDuoSlider(root = document) {
   let activeIndex = 0;
   let isAnimating = false;
   let pendingIndex = null;
-  // Côté du DERNIER jet effectué (1 = droite, -1 = gauche) — sert à
-  // faire revenir la carte par le même côté quand on clique "précédent",
-  // plutôt que toujours par la droite.
   let lastThrowSide = 1;
 
   let reduced = prefersReducedMotion();
@@ -193,10 +190,6 @@ export function initDuoSlider(root = document) {
     };
   }
 
-  // direction : 1 = "suivant", -1 = "précédent".
-  // throwSide : 1 = jette/fait entrer à droite, -1 = à gauche — dissocié
-  // de `direction` pour permettre au drag de jeter dans le sens réel du
-  // geste, peu importe si logiquement c'est un "suivant".
   function render(animate = true, direction = 1, throwSide = 1) {
     if (animate) isAnimating = true;
 
@@ -254,13 +247,10 @@ export function initDuoSlider(root = document) {
       }
 
       if (isBeingThrown) {
-        // Le sens du jet suit throwSide — toujours à droite pour un
-        // clic/clavier (throwSide=1 par défaut), mais dans le sens
-        // réel du geste quand déclenché par un drag.
         const throwX = THROW_DISTANCE * throwSide;
         const throwRotate = THROW_ROTATION * throwSide;
         const throwRotateY = THROW_ROTATE_Y * throwSide;
-        lastThrowSide = throwSide; // mémorisé pour l'entrée du prochain "précédent"
+        lastThrowSide = throwSide;
 
         gsap.to(item, {
           keyframes: {
@@ -299,8 +289,6 @@ export function initDuoSlider(root = document) {
           },
         });
       } else if (isBecomingActive) {
-        // Revient du même côté que le dernier jet, pas toujours de la
-        // droite — cohérent avec un drag qui aurait jeté à gauche.
         const entranceX = THROW_DISTANCE * lastThrowSide;
         const entranceRotate = THROW_ROTATION * lastThrowSide;
         const entranceRotateY = THROW_ROTATE_Y * lastThrowSide;
@@ -403,12 +391,6 @@ export function initDuoSlider(root = document) {
     }
   });
 
-  // --- Drag façon "Tinder" (mobile uniquement) ------------------------------
-  //
-  // N'importe quel sens dismiss la carte active et avance à la
-  // suivante — la carte continue de voler dans le sens où elle a été
-  // tirée (pas toujours à droite comme pour un clic bouton). Suit le
-  // doigt 1:1 pendant le drag, sans interpolation.
   let dragState = null;
 
   function isDragEnabled() {
@@ -453,9 +435,9 @@ export function initDuoSlider(root = document) {
         dragState.locked = "x";
         dragState.item.setPointerCapture(dragState.pointerId);
         gsap.killTweensOf(dragState.item);
-        lockPageScroll(); // swipe horizontal confirmé : plus de scroll de page tant que ça dure
+        lockPageScroll();
       } else if (Math.abs(dragState.deltaY) > DRAG_DIRECTION_LOCK) {
-        dragState.locked = "y"; // scroll de page : on abandonne le drag
+        dragState.locked = "y";
         dragState = null;
         return;
       } else {
@@ -486,7 +468,6 @@ export function initDuoSlider(root = document) {
     if (locked !== "x") return;
 
     if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD) {
-      // N'importe quel sens = suivant, jeté dans le sens réel du geste.
       goTo(activeIndex + 1, { throwSide: Math.sign(deltaX) });
     } else {
       gsap.to(item, {

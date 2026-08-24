@@ -9,8 +9,8 @@ const ENTRY_TILT = 35;
 const MOUSE_EASE = 0.08;
 const MOBILE_BREAKPOINT = 767;
 const MOBILE_ENTER_DURATION = 1.2;
-const FULL_PROGRESS_THRESHOLD = 0.999; // considéré "zoom à 100%" au-delà de ça
-const TOOLS_VIDEO_STAGGER = 80; // délai (ms) entre le déclenchement de chaque tool
+const FULL_PROGRESS_THRESHOLD = 0.999;
+const TOOLS_VIDEO_STAGGER = 80;
 
 function readTranslate(el) {
   const transform = getComputedStyle(el).transform;
@@ -19,19 +19,16 @@ function readTranslate(el) {
   return { x: matrix.m41, y: matrix.m42 };
 }
 
-// Toutes les vidéos "manuelles" (main + tools) de la section.
 function getRevealVideoControllers(section) {
   return Array.from(section.querySelectorAll('[data-video-trigger="manual"]'))
     .map((el) => getControllerForElement(el))
     .filter(Boolean);
 }
 
-// Vidéo "manuelle" du main uniquement (déclenchement au milieu du viewport).
 function getMainVideoController(main) {
   return getControllerForElement(main);
 }
 
-// Vidéos "manuelles" des tools uniquement (déclenchement en fin de zoom).
 function getToolsVideoControllers(section) {
   return Array.from(section.querySelectorAll('.zoom-content--tools[data-video-trigger="manual"]'))
     .map((el) => getControllerForElement(el))
@@ -85,8 +82,6 @@ export function initZoomReveal(root = document) {
   let mobileVideoObserver = null;
   let toolsTriggerTimeouts = [];
 
-  // État partagé du déclenchement des vidéos "tools" entre l'animation de
-  // zoom (qui déclenche) et le trigger de sortie de section (qui reset).
   const toolsVideoState = {
     revealed: false,
     controllers: [],
@@ -122,7 +117,6 @@ export function initZoomReveal(root = document) {
     return toolsVideoState.controllers;
   }
 
-  // Déclenche les vidéos des tools en cascade (délai progressif).
   function triggerToolsVideos() {
     if (toolsVideoState.revealed) return;
     const controllers = getToolsControllers();
@@ -134,7 +128,6 @@ export function initZoomReveal(root = document) {
     });
   }
 
-  // Reset des vidéos des tools.
   function resetToolsVideos() {
     if (!toolsVideoState.revealed) return;
     toolsVideoState.revealed = false;
@@ -142,7 +135,6 @@ export function initZoomReveal(root = document) {
     getToolsControllers().forEach((c) => c.reset());
   }
 
-  // Remet toutes les vidéos "manuelles" à zéro (utile à chaque (re)setup)
   function resetRevealVideos() {
     clearToolsTriggerTimeouts();
     toolsVideoState.revealed = false;
@@ -261,9 +253,6 @@ export function initZoomReveal(root = document) {
     return trigger;
   }
 
-  // Main : la vidéo se déclenche quand le conteneur atteint le milieu du
-  // viewport (indépendamment du progress du zoom / du pin), et se reset si
-  // on repasse au-dessus de ce point en remontant.
   function setupMainVideoTrigger() {
     let mainRevealed = false;
     let mainController = null;
@@ -294,9 +283,6 @@ export function initZoomReveal(root = document) {
     });
   }
 
-  // Tools : le reset ne doit avoir lieu que quand la section est vraiment
-  // sortie du viewport par le haut (le haut de la section atteint le bas du
-  // viewport en remontant), pas au moindre demi-tour dans le scroll du pin.
   function setupToolsVideoResetTrigger() {
     return ScrollTrigger.create({
       id: "zoom-reveal-tools-video-reset",
@@ -328,11 +314,6 @@ export function initZoomReveal(root = document) {
     });
   }
 
-  // Mobile : la vidéo ne se joue/réinitialise que sur un scroll vers le bas
-  // pour l'arrivée (depuis la section précédente), et un reset n'a lieu que
-  // si on quitte la section par le HAUT (retour vers la section précédente).
-  // Si on continue vers le bas puis remonte plus tard depuis une section
-  // suivante, la vidéo garde son état déjà joué, sans reset intempestif.
   function setupMobileVideoSync() {
     const controllerByEl = new Map();
     section.querySelectorAll('[data-video-trigger="manual"]').forEach((el) => {
@@ -354,15 +335,10 @@ export function initZoomReveal(root = document) {
           if (!controller) return;
 
           if (entry.isIntersecting) {
-            // Déclenche seulement en arrivant depuis la section précédente
-            // (scroll vers le bas).
             if (scrollingDown) {
               controller.trigger();
             }
           } else {
-            // Reset seulement en quittant par le haut (retour vers la
-            // section précédente). Continuer vers le bas conserve l'état
-            // déjà joué de la vidéo.
             if (!scrollingDown) {
               controller.reset();
             }

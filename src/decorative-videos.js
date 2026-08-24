@@ -56,7 +56,6 @@ function reloadAndPrime(video) {
 
 function createController(video, config) {
   let delayTimer = null;
-  let hasPlayedIntro = false;
   let isLooping = false;
 
   function clearDelay() {
@@ -74,7 +73,6 @@ function createController(video, config) {
 
   function onEnded() {
     if (config.loopStart != null || config.loopEnd != null) {
-      hasPlayedIntro = true;
       isLooping = true;
       video.currentTime = config.loopStart ?? 0;
       video.play().catch(() => {});
@@ -88,7 +86,8 @@ function createController(video, config) {
     trigger() {
       clearDelay();
       const start = () => {
-        if (config.replay || !hasPlayedIntro) {
+        if (video.ended) {
+          if (!config.replay) return;
           isLooping = false;
           video.currentTime = 0;
         }
@@ -103,7 +102,6 @@ function createController(video, config) {
     reset() {
       clearDelay();
       isLooping = false;
-      hasPlayedIntro = false;
       video.pause();
       reloadAndPrime(video);
     },
@@ -207,8 +205,6 @@ function attachPlayPauseButton(video, id, requested) {
   button.dataset.videoControl = id;
   button.dataset.videoAction = "toggle";
   button.dataset.videoAutoBound = "1";
-  // Background/border/radius now come from real CSS on .video-play-pause —
-  // the SVGs only draw the icon strokes, no more filled circle underneath.
   button.innerHTML = `
     <span class="icon-play" aria-hidden="true">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M7 5V19L18 12L7 5Z" stroke="var(--control-icon-color, currentColor)" stroke-width="2" stroke-linejoin="round" fill="none"></path></svg>
@@ -263,14 +259,8 @@ export function initDecorativeVideos(root = document) {
   if (!images.length) return;
   if (prefersReducedMotion()) return;
 
-  let lastScrollY = window.scrollY;
-
   const visibilityObserver = new IntersectionObserver(
     (entries) => {
-      const currentScrollY = window.scrollY;
-      const scrollingDown = currentScrollY >= lastScrollY;
-      lastScrollY = currentScrollY;
-
       entries.forEach((entry) => {
         const video = entry.target;
         if (video.dataset.videoTrigger !== "visible") return;
@@ -279,16 +269,12 @@ export function initDecorativeVideos(root = document) {
         const controller = getControllerForElement(video);
 
         if (entry.isIntersecting) {
-          if (!scrollingDown) return;
-
           if (controller) {
             controller.trigger();
           } else {
             video.play().catch(() => {});
           }
         } else {
-          if (!scrollingDown) return;
-
           if (controller) {
             controller.pause();
           } else {
@@ -297,7 +283,7 @@ export function initDecorativeVideos(root = document) {
         }
       });
     },
-    { threshold: 0.1 }
+    { threshold: 0 }
   );
 
   images.forEach((img) => swapToVideo(img, visibilityObserver));

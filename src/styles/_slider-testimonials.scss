@@ -27,6 +27,24 @@
   }
 }
 
+.rating-card {
+  overflow: hidden;
+}
+
+.star-icon {
+  position: relative;
+}
+
+.star-icon-base,
+.star-icon-fill {
+  position: absolute;
+  inset: 0;
+}
+
+.star-icon-base {
+  color: var(--star-empty-color, #d8d0c8);
+}
+
 .slider-dots {
   position: relative;
   height: 8px;

@@ -4,10 +4,13 @@ import {
   prefersReducedMotion,
   onMotionPreferenceChange,
 } from "./utils/motion-preference.js";
+import { applyStarRatings } from "./utils/star-rating.js";
 
 const MOBILE_BREAKPOINT = 767;
 const DRAG_COMMIT_THRESHOLD = 60;
 const DRAG_DIRECTION_LOCK = 10;
+const CONTENT_HIDE_BUFFER = 16;
+const STAR_STAGGER = 0.06;
 
 export function initSliderTestimonials(root = document) {
   const section = root.querySelector(".slider");
@@ -36,6 +39,29 @@ export function initSliderTestimonials(root = document) {
   const DOT_SPACING = 14;
 
   const lastDistance = new WeakMap();
+  const wasActiveMap = new WeakMap();
+  const contents = items.map((item) => item.querySelector(".rating-content"));
+  const cards = items.map((item) => item.querySelector(".rating-card"));
+  const starIcons = items.map((item) =>
+    Array.from(item.querySelectorAll(".stars-list > .icon-xs")),
+  );
+  let contentOffsets = items.map(() => 0);
+
+  function computeContentOffsets() {
+    contentOffsets = items.map((item, index) => {
+      const content = contents[index];
+      const card = cards[index];
+      if (!content || !card) return 0;
+
+      const contentRect = content.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+
+      // Distance pour que le HAUT du contenu dépasse le BAS de la carte,
+      // garantissant qu'il soit entièrement clippé par overflow:hidden.
+      const distance = cardRect.bottom - contentRect.top + CONTENT_HIDE_BUFFER;
+      return Math.max(distance, 0);
+    });
+  }
 
   let reduced = prefersReducedMotion();
   let DURATION = reduced ? 0 : 0.6;
@@ -193,6 +219,65 @@ export function initSliderTestimonials(root = document) {
       getFocusableChildren(item).forEach((el) => {
         el.tabIndex = isVisible ? 0 : -1;
       });
+
+      const content = contents[index];
+      const stars = starIcons[index];
+      const previouslyActive = wasActiveMap.get(item) ?? false;
+      const hiddenY = contentOffsets[index] || 0;
+
+      if (content) {
+        gsap.killTweensOf(content);
+        if (stars.length) gsap.killTweensOf(stars);
+
+        if (instant) {
+          gsap.set(content, { y: isActive ? 0 : hiddenY });
+          if (stars.length) {
+            gsap.set(stars, {
+              opacity: isActive ? 1 : 0,
+              scale: isActive ? 1 : 0,
+            });
+          }
+        } else if (isActive && !previouslyActive) {
+          const tl = gsap.timeline();
+          tl.fromTo(
+            content,
+            { y: hiddenY },
+            { y: 0, duration: DURATION, ease: EASE },
+          );
+          if (stars.length) {
+            tl.fromTo(
+              stars,
+              { opacity: 0, scale: 0 },
+              {
+                opacity: 1,
+                scale: 1,
+                duration: DURATION * 0.5,
+                ease: "back.out(1.7)",
+                stagger: STAR_STAGGER,
+              },
+              DURATION * 0.35,
+            );
+          }
+        } else if (!isActive && previouslyActive) {
+          const tl = gsap.timeline();
+          if (stars.length) {
+            tl.to(stars, {
+              opacity: 0,
+              scale: 0,
+              duration: DURATION * 0.3,
+              ease: "power1.in",
+              stagger: { each: STAR_STAGGER * 0.5, from: "end" },
+            });
+          }
+          tl.to(
+            content,
+            { y: hiddenY, duration: DURATION, ease: EASE },
+            stars.length ? DURATION * 0.15 : 0,
+          );
+        }
+      }
+
+      wasActiveMap.set(item, isActive);
     });
 
     dots.forEach((dot, index) => {
@@ -357,10 +442,17 @@ export function initSliderTestimonials(root = document) {
     resizeTimer = setTimeout(() => {
       cardWidth = items[0].getBoundingClientRect().width || cardWidth;
       spacing = cardWidth * 0.28;
+      computeContentOffsets();
       render(true);
     }, 150);
   });
 
   gsap.set(items, { x: 0, xPercent: -50, yPercent: -50, y: 0 });
+  gsap.set(contents, { y: 0 });
+  starIcons.forEach((stars) => {
+    if (stars.length) gsap.set(stars, { opacity: 1, scale: 1 });
+  });
+  applyStarRatings(items);
+  computeContentOffsets();
   render(true);
 }

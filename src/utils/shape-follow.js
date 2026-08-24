@@ -6,6 +6,12 @@ export function setShapeFollower(fn) {
   follower = fn;
 }
 
+export function clearShapeFollower(fn) {
+  if (follower !== fn) return;
+  follower = null;
+}
+
 export function reportWipeProgress(revealedFraction) {
-  follower?.(revealedFraction);
+  if (!follower) return;
+  follower(revealedFraction);
 }

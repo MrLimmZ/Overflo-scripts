@@ -3,7 +3,7 @@
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
 
 const MOBILE_BREAKPOINT = 767;
-const MOBILE_SMOOTH_EASE = 0.15; // vitesse de rattrapage vers la vraie position de scroll
+const MOBILE_SMOOTH_EASE = 0.15;
 
 function splitIntoWordTokens(html) {
   const withMarkers = html.replace(/<br\s*\/?>/gi, " \n ");
