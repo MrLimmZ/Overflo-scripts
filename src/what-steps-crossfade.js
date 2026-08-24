@@ -176,7 +176,6 @@ export function initWhatStepsCrossfade(root = document) {
       applyStaticState();
     } else {
       st = createScrollAnimation();
-      ScrollTrigger.refresh();
     }
   }
 

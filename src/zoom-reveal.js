@@ -378,7 +378,6 @@ export function initZoomReveal(root = document) {
       st = createScrollAndMouseAnimation();
       mainVideoTrigger = setupMainVideoTrigger();
       toolsResetTrigger = setupToolsVideoResetTrigger();
-      ScrollTrigger.refresh();
     }
   }
 
