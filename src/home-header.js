@@ -134,13 +134,6 @@ export function initHomeHeaderSnap(root = document) {
   let activeSide = window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE ? "home" : "next";
 
   function syncInitialShapeGeometry() {
-    // Check proactif : sans lui, une instance périmée ne se détache que
-    // lorsqu'un de SES PROPRES listeners wheel/touch/keydown se déclenche
-    // par hasard — ce qui peut prendre un moment (ou ne jamais arriver
-    // avant le prochain scroll). refreshInit se déclenche à chaque
-    // ScrollTrigger.refresh(), donc systématiquement en tout début de
-    // reinitModules() suivant : ça permet à l'instance périmée de
-    // s'auto-nettoyer dès la page suivante, sans attendre une interaction.
     if (cleanupIfDetached()) return;
     if (!shapeEl) return;
     initialShapeSize = computeInitialShapeSize();
