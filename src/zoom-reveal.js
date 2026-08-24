@@ -10,7 +10,7 @@ const MOUSE_EASE = 0.08;
 const MOBILE_BREAKPOINT = 767;
 const MOBILE_ENTER_DURATION = 1.2;
 const FULL_PROGRESS_THRESHOLD = 0.999; // considéré "zoom à 100%" au-delà de ça
-const HIDDEN_PROGRESS_THRESHOLD = 0.01; // considéré "revenu au tout début" en dessous de ça
+const TOOLS_VIDEO_STAGGER = 80; // délai (ms) entre le déclenchement de chaque tool
 
 function readTranslate(el) {
   const transform = getComputedStyle(el).transform;
@@ -19,10 +19,21 @@ function readTranslate(el) {
   return { x: matrix.m41, y: matrix.m42 };
 }
 
-// Trouve les vidéos "manuelles" (data-video-trigger="manual") dans la section,
-// avec leur controller associé (trigger/reset), fourni par decorative-videos.js.
+// Toutes les vidéos "manuelles" (main + tools) de la section.
 function getRevealVideoControllers(section) {
   return Array.from(section.querySelectorAll('[data-video-trigger="manual"]'))
+    .map((el) => getControllerForElement(el))
+    .filter(Boolean);
+}
+
+// Vidéo "manuelle" du main uniquement (déclenchement au milieu du viewport).
+function getMainVideoController(main) {
+  return getControllerForElement(main);
+}
+
+// Vidéos "manuelles" des tools uniquement (déclenchement en fin de zoom).
+function getToolsVideoControllers(section) {
+  return Array.from(section.querySelectorAll('.zoom-content--tools[data-video-trigger="manual"]'))
     .map((el) => getControllerForElement(el))
     .filter(Boolean);
 }
@@ -67,9 +78,19 @@ export function initZoomReveal(root = document) {
   const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
   let st = null;
+  let mainVideoTrigger = null;
+  let toolsResetTrigger = null;
   let rafId = null;
   let mouseController = null;
   let mobileVideoObserver = null;
+  let toolsTriggerTimeouts = [];
+
+  // État partagé du déclenchement des vidéos "tools" entre l'animation de
+  // zoom (qui déclenche) et le trigger de sortie de section (qui reset).
+  const toolsVideoState = {
+    revealed: false,
+    controllers: [],
+  };
 
   function stopMouseLoop() {
     if (mouseController) {
@@ -89,8 +110,42 @@ export function initZoomReveal(root = document) {
     }
   }
 
+  function clearToolsTriggerTimeouts() {
+    toolsTriggerTimeouts.forEach((id) => clearTimeout(id));
+    toolsTriggerTimeouts = [];
+  }
+
+  function getToolsControllers() {
+    if (!toolsVideoState.controllers.length) {
+      toolsVideoState.controllers = getToolsVideoControllers(section);
+    }
+    return toolsVideoState.controllers;
+  }
+
+  // Déclenche les vidéos des tools en cascade (délai progressif).
+  function triggerToolsVideos() {
+    if (toolsVideoState.revealed) return;
+    const controllers = getToolsControllers();
+    if (!controllers.length) return;
+    toolsVideoState.revealed = true;
+    controllers.forEach((c, index) => {
+      const id = setTimeout(() => c.trigger(), index * TOOLS_VIDEO_STAGGER);
+      toolsTriggerTimeouts.push(id);
+    });
+  }
+
+  // Reset des vidéos des tools.
+  function resetToolsVideos() {
+    if (!toolsVideoState.revealed) return;
+    toolsVideoState.revealed = false;
+    clearToolsTriggerTimeouts();
+    getToolsControllers().forEach((c) => c.reset());
+  }
+
   // Remet toutes les vidéos "manuelles" à zéro (utile à chaque (re)setup)
   function resetRevealVideos() {
+    clearToolsTriggerTimeouts();
+    toolsVideoState.revealed = false;
     getRevealVideoControllers(section).forEach((c) => c.reset());
   }
 
@@ -152,26 +207,9 @@ export function initZoomReveal(root = document) {
     let curMouseX = 0;
     let curMouseY = 0;
 
-    // Desktop : la vidéo se déclenche seulement au zoom 100%, et ne se reset
-    // que si on revient quasiment tout en haut (pas au moindre demi-tour).
-    let fullyRevealed = false;
-    let revealControllers = [];
-
-    function syncRevealVideos(p) {
-      if (!revealControllers.length) {
-        revealControllers = getRevealVideoControllers(section);
-        if (!revealControllers.length) return;
-      }
-
-      const isFull = p >= FULL_PROGRESS_THRESHOLD;
-      const isHidden = p <= HIDDEN_PROGRESS_THRESHOLD;
-
-      if (isFull && !fullyRevealed) {
-        fullyRevealed = true;
-        revealControllers.forEach((c) => c.trigger());
-      } else if (isHidden && fullyRevealed) {
-        fullyRevealed = false;
-        revealControllers.forEach((c) => c.reset());
+    function syncToolsVideos(p) {
+      if (p >= FULL_PROGRESS_THRESHOLD) {
+        triggerToolsVideos();
       }
     }
 
@@ -193,7 +231,7 @@ export function initZoomReveal(root = document) {
       onUpdate: (self) => {
         progress = self.progress;
         tick();
-        syncRevealVideos(progress);
+        syncToolsVideos(progress);
       },
     });
 
@@ -221,6 +259,51 @@ export function initZoomReveal(root = document) {
     rafId = requestAnimationFrame(raf);
 
     return trigger;
+  }
+
+  // Main : la vidéo se déclenche quand le conteneur atteint le milieu du
+  // viewport (indépendamment du progress du zoom / du pin), et se reset si
+  // on repasse au-dessus de ce point en remontant.
+  function setupMainVideoTrigger() {
+    let mainRevealed = false;
+    let mainController = null;
+
+    function getController() {
+      if (!mainController) {
+        mainController = getMainVideoController(main);
+      }
+      return mainController;
+    }
+
+    return ScrollTrigger.create({
+      id: "zoom-reveal-main-video-trigger",
+      trigger: section,
+      start: "top center",
+      onEnter: () => {
+        if (mainRevealed) return;
+        mainRevealed = true;
+        const c = getController();
+        if (c) c.trigger();
+      },
+      onLeaveBack: () => {
+        if (!mainRevealed) return;
+        mainRevealed = false;
+        const c = getController();
+        if (c) c.reset();
+      },
+    });
+  }
+
+  // Tools : le reset ne doit avoir lieu que quand la section est vraiment
+  // sortie du viewport par le haut (le haut de la section atteint le bas du
+  // viewport en remontant), pas au moindre demi-tour dans le scroll du pin.
+  function setupToolsVideoResetTrigger() {
+    return ScrollTrigger.create({
+      id: "zoom-reveal-tools-video-reset",
+      trigger: section,
+      start: "top bottom",
+      onLeaveBack: () => resetToolsVideos(),
+    });
   }
 
   function createMobileEnterAnimation() {
@@ -298,6 +381,14 @@ export function initZoomReveal(root = document) {
       st.kill();
       st = null;
     }
+    if (mainVideoTrigger) {
+      mainVideoTrigger.kill();
+      mainVideoTrigger = null;
+    }
+    if (toolsResetTrigger) {
+      toolsResetTrigger.kill();
+      toolsResetTrigger = null;
+    }
     stopMouseLoop();
     stopMobileVideoSync();
     resetRevealVideos();
@@ -309,6 +400,8 @@ export function initZoomReveal(root = document) {
       mobileVideoObserver = setupMobileVideoSync();
     } else {
       st = createScrollAndMouseAnimation();
+      mainVideoTrigger = setupMainVideoTrigger();
+      toolsResetTrigger = setupToolsVideoResetTrigger();
       ScrollTrigger.refresh();
     }
   }

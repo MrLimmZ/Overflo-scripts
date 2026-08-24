@@ -12,6 +12,7 @@ export function initButtonHover(root = document) {
 
     const circle = button.querySelector(".button-bg-circle");
     if (!circle) return;
+    gsap.set(circle, { display: "block", yPercent: 102 });
 
     let circleTween;
     let colorTimeout;
@@ -24,15 +25,14 @@ export function initButtonHover(root = document) {
       if (circleTween) circleTween.kill();
 
       if (reduced) {
-        gsap.set(circle, { scale: 8 });
+        gsap.set(circle, { yPercent: 0 });
         return;
       }
 
       circleTween = gsap.to(circle, {
-        scale: 8,
-        duration: 1.4,
-        ease: "sine.out",
-        overwrite: true,
+        yPercent: 0,
+        duration: 0.5,
+        ease: "expo.out",
       });
     });
 
@@ -40,18 +40,17 @@ export function initButtonHover(root = document) {
       if (circleTween) circleTween.kill();
 
       if (reduced) {
-        gsap.set(circle, { scale: 0 });
+        gsap.set(circle, { yPercent: 102 });
         button.classList.remove("is-hover");
         return;
       }
 
       circleTween = gsap.to(circle, {
-        scale: 0,
-        duration: 0.8,
-        ease: "power3.inOut",
-        overwrite: true,
+        yPercent: 102,
+        duration: 0.5,
+        ease: "expo.out",
       });
-      colorTimeout = gsap.delayedCall(0.35, () => {
+      colorTimeout = gsap.delayedCall(0.1, () => {
         button.classList.remove("is-hover");
       });
     });

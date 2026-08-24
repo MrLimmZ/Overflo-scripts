@@ -207,12 +207,14 @@ function attachPlayPauseButton(video, id, requested) {
   button.dataset.videoControl = id;
   button.dataset.videoAction = "toggle";
   button.dataset.videoAutoBound = "1";
+  // Background/border/radius now come from real CSS on .video-play-pause —
+  // the SVGs only draw the icon strokes, no more filled circle underneath.
   button.innerHTML = `
     <span class="icon-play" aria-hidden="true">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50"><circle cx="25" cy="25" r="24" fill="var(--control-background-color, transparent)" stroke="var(--control-outline-color, transparent)" stroke-width="2"></circle><g transform="translate(20, 18)"><path d="M1 1V13L12 7L1 1Z" stroke="var(--control-icon-color, white)" stroke-width="2" stroke-linejoin="round" fill="none"></path></g></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M7 5V19L18 12L7 5Z" stroke="var(--control-icon-color, currentColor)" stroke-width="2" stroke-linejoin="round" fill="none"></path></svg>
     </span>
     <span class="icon-pause" aria-hidden="true">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50"><circle cx="25" cy="25" r="24" fill="var(--control-background-color, transparent)" stroke="var(--control-outline-color, transparent)" stroke-width="2"></circle><g transform="translate(20, 19)"><path d="M1 0V12" stroke="var(--control-icon-color, white)" stroke-width="2"></path><path d="M9 0V12" stroke="var(--control-icon-color, white)" stroke-width="2"></path></g></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M8 5V19" stroke="var(--control-icon-color, currentColor)" stroke-width="2"></path><path d="M16 5V19" stroke="var(--control-icon-color, currentColor)" stroke-width="2"></path></svg>
     </span>
   `;
 

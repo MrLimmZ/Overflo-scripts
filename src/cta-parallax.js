@@ -3,7 +3,7 @@
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
 
 export function initCtaParallax(root = document) {
-  const cta = root.querySelector(".cta-section");
+  const cta = root.querySelector(".cta-section--content");
   const layers = root.querySelectorAll(".cta-image-layer");
   if (!cta || !layers.length) return;
 

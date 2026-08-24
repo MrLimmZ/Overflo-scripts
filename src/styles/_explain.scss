@@ -1,27 +1,16 @@
-@media screen and (min-width: 768px) {
-  .explain {
-    position: relative;
-    height: 100vh;
-    overflow: hidden;
-    background: none;
-  }
+/* src/styles/main.scss */
 
-  .explain-step {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    will-change: transform;
-    z-index: 1;
-  }
+.explain {
+  position: relative;
+  height: 100svh;
+}
 
-  .explain-step-banner {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 16vw;
-    will-change: transform, clip-path;
-    overflow: hidden;
-  }
+.explain--content {
+  position: relative;
+  height: 100%;
+  border-radius: var(--_border-radius---radius-lg);
+  overflow: hidden;
+  background: none;
 }
 
 .explain-step-banner video {
@@ -34,14 +23,16 @@
 }
 
 .video-play-pause {
-  width: 40px;
-  height: 40px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  background: transparent;
   cursor: pointer;
+
+  background-color: var(--_colors---text--background-primary);
+  border-radius: var(--_border-radius---radius-sm);
+  border: 1px solid var(--_tokens---beige--400);
 
   opacity: 0;
   transform: scale(0.6);
@@ -50,9 +41,7 @@
     opacity 0.25s ease,
     transform 0.25s ease;
 
-  --control-background-color: rgba(0, 0, 0, 0.5);
-  --control-outline-color: transparent;
-  --control-icon-color: #fff;
+  --control-icon-color: var(--_colors---text--text-secondary);
 
   &.is-visible {
     opacity: 1;

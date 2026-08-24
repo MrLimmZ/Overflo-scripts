@@ -1,17 +1,45 @@
 // src/heading-steps.js
 
-import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
-import { acquireScrollLock, releaseScrollLock } from "./utils/scroll-lock.js";
 import { reportWipeProgress } from "./utils/shape-follow.js";
+import { acquireScrollLock, releaseScrollLock } from "./utils/scroll-lock.js";
 
 const OWNER_ID = "explain-steps";
-
 const SLIDE_DURATION = 0.7;
 const SLIDE_EASE = "power3.inOut";
-const UNSTOP_DELAY = 0.05;
+const MASK_DURATION = 1.8;
+const MASK_EASE = "power3.inOut";
 const WIPE_RADIUS = 24;
-const MOBILE_BREAKPOINT = 767;
-const LEAVE_HOME_OVERLAP = 0.6;
+const ENTRANCE_DURATION = 0.9;
+const ENTRANCE_EASE = "power3.out";
+const UNSTOP_DELAY = 0.05;
+// Un seul geste de molette/trackpad envoie des events en continu pendant
+// son inertie (parfois >1s), donc accumuler le deltaY total ne distingue
+// pas "un geste qui traîne" d'"un vrai second geste". Le seul signal fiable
+// est un silence entre deux events : s'il n'y a AUCUNE pause d'au moins
+// GESTURE_GAP_MS, tout ce qui arrive fait partie du même geste initial et
+// ne doit jamais déclencher d'enchaînement, peu importe le total cumulé.
+const GESTURE_GAP_MS = 120;
+const QUEUED_SCROLL_THRESHOLD = 15;
+
+function lenisStop() {
+  acquireScrollLock(OWNER_ID);
+  window.lenis?.stop();
+}
+function lenisStart() {
+  window.lenis?.start();
+  releaseScrollLock(OWNER_ID);
+}
+// Recentrage utilisé pendant que Lenis est encore arrêté (lenisStop() actif,
+// lenisStart() pas encore rappelé) — lenis.scrollTo() ne s'applique pas de
+// façon fiable dans cet état, ce qui désynchronise currentActiveIndex du
+// vrai scrollY quand plusieurs transitions s'enchaînent (surtout avec un
+// verrouillage plus long comme MASK_DURATION). On force le scroll natif
+// directement, indépendamment de Lenis, qui se resynchronise ensuite tout
+// seul quand il redémarre.
+function forceScrollTo(y) {
+  window.scrollTo(0, y);
+  ScrollTrigger.update();
+}
 
 function clipHidden(dir) {
   return dir > 0
@@ -25,19 +53,12 @@ function radiusForVisibleHeight(heightPx) {
   if (!heightPx) return WIPE_RADIUS;
   return Math.min(WIPE_RADIUS, heightPx / 2);
 }
-
 function clipPathForHidden(dir, hiddenPercent, radiusPx) {
   return dir > 0
     ? `inset(${hiddenPercent}% 0% 0% 0% round ${radiusPx}px)`
     : `inset(0% 0% ${hiddenPercent}% 0% round ${radiusPx}px)`;
 }
 
-// Retire aussi la classe "is-wiping" (voir tweenClipReveal) : si un
-// wipe est interrompu avant sa fin naturelle (nouveau stepToward
-// déclenché en plein milieu), la classe ne doit pas rester bloquée
-// indéfiniment sur le banner — c'est le SEUL point de sortie commun à
-// tous les cas d'interruption (resetBannerNeutral, setBannerStable,
-// primeEntranceState appellent tous killWipeTween en premier).
 function killWipeTween(banner) {
   if (banner && banner.__wipeTween) {
     banner.__wipeTween.kill();
@@ -46,31 +67,12 @@ function killWipeTween(banner) {
   if (banner) banner.classList.remove("is-wiping");
 }
 
-// Anime le wipe (ouverture ou fermeture) du banner via un proxy tweené
-// par GSAP plutôt qu'un tween direct sur le clip-path, pour pouvoir
-// recalculer le rayon à chaque frame (voir note plus bas).
-//
-// Classe "is-wiping" : posée de façon SYNCHRONE dès l'appel (avant
-// même le début du tween), retirée uniquement à la toute fin réelle
-// de l'animation (onComplete). C'est un contrat exposé à d'autres
-// modules externes (ex: decorative-videos.js, qui l'utilise pour
-// savoir précisément quand un bouton play/pause superposé doit
-// apparaître/disparaître) : contrairement à l'opacité — posée
-// immédiatement à 1 pour un banner entrant, ou animée en fondu sur
-// toute la durée pour un banner sortant — cette classe donne un
-// signal net et exact du début/fin réel du déplacement visuel du
-// mask, sans dépendre de la valeur d'opacité à un instant T.
-function tweenClipReveal(
-  timeline,
-  banner,
-  dir,
-  fromHidden,
-  toHidden,
-  duration,
-  ease,
-  position,
-  coupledToShape = false
-) {
+// Utilisé pour l'entrée sur le step 0 ET pour toutes les transitions
+// step→step — même mécanique de wipe partout. `coupledToShape` (seulement
+// pour l'entrée/sortie du step 0) fait suivre le mask de home-header en
+// temps réel sur la progression réelle du wipe, pas sur un tween à durée
+// fixe indépendant.
+function tweenClipReveal(timeline, banner, dir, fromHidden, toHidden, duration, ease, position, coupledToShape = false) {
   if (!banner) return;
   killWipeTween(banner);
   banner.classList.add("is-wiping");
@@ -103,25 +105,6 @@ function tweenClipReveal(
   banner.__wipeTween = tween;
   timeline.add(tween, position);
 }
-function lenisStop() {
-  acquireScrollLock(OWNER_ID);
-  window.lenis?.stop();
-}
-function lenisStart() {
-  window.lenis?.start();
-  releaseScrollLock(OWNER_ID);
-}
-function scrollTo(y) {
-  if (window.lenis) {
-    window.lenis.scrollTo(y, { immediate: true });
-  } else {
-    window.scrollTo(0, y);
-  }
-}
-
-function easeInOutCubic(t) {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}
 
 function setPinStackOrder(section, zIndexValue) {
   gsap.set(section, { zIndex: zIndexValue });
@@ -140,7 +123,10 @@ export function initExplainSteps(root = document) {
   if (section.dataset.explainInit) return;
   section.dataset.explainInit = "1";
 
-  const stepEls = Array.from(section.querySelectorAll(":scope > .explain-step"));
+  const contentWrapper = section.querySelector(":scope > .explain--content");
+  if (!contentWrapper) return;
+
+  const stepEls = Array.from(contentWrapper.querySelectorAll(":scope > .explain-step"));
   const total = stepEls.length;
   if (!total) return;
 
@@ -148,15 +134,6 @@ export function initExplainSteps(root = document) {
     step,
     banner: step.querySelector(":scope > .explain-step-banner"),
   }));
-
-  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
-
-  let st = null;
-  let currentActiveIndex = -1;
-  let activeTimeline = null;
-  let entered = false;
-  let headerOverlap = 0;
-  let bandStep = 0;
 
   function targetY(index, activeIndex) {
     return (index - activeIndex) * window.innerHeight;
@@ -179,7 +156,6 @@ export function initExplainSteps(root = document) {
   }
 
   function setBannerStable(activeIndex) {
-    setStepStacking(activeIndex, -1);
     steps.forEach(({ banner }, index) => {
       if (!banner) return;
       if (index === activeIndex) {
@@ -200,18 +176,25 @@ export function initExplainSteps(root = document) {
       if (banner) gsap.set(banner, { y: -y });
       step.style.pointerEvents = index === activeIndex ? "auto" : "none";
     });
+    setStepStacking(activeIndex, -1);
     setBannerStable(activeIndex);
     currentActiveIndex = activeIndex;
   }
 
+  const firstBanner = steps[0]?.banner;
+  let entranceTween = null;
+  let entranceRevealed = false;
+
+  // État de départ : step 0 en place, mais son banner reste masqué (clip
+  // fermé) tant que l'entrée animée n'a pas joué — c'est la suite visuelle
+  // du mask qui grossit côté home-header.
   function primeEntranceState() {
     steps.forEach(({ step, banner }, index) => {
-      const y = targetY(index, -1);
+      const y = targetY(index, 0);
       gsap.set(step, { y });
       if (banner) gsap.set(banner, { y: -y });
       step.style.pointerEvents = index === 0 ? "auto" : "none";
     });
-
     setStepStacking(0, -1);
     steps.forEach(({ banner }, index) => {
       if (!banner) return;
@@ -224,171 +207,111 @@ export function initExplainSteps(root = document) {
         resetBannerNeutral(banner);
       }
     });
-
-    currentActiveIndex = -1;
-  }
-
-  function playEntranceStep() {
-    if (entered) return;
-    entered = true;
-
-    if (mobileMq.matches || prefersReducedMotion()) {
-      setStepsImmediate(0);
-      reportWipeProgress(1);
-      return;
-    }
-    if (currentActiveIndex !== -1) return;
-
-    const incomingBanner = steps[0]?.banner;
-
     currentActiveIndex = 0;
-    steps.forEach(({ step }, index) => {
-      step.style.pointerEvents = index === 0 ? "auto" : "none";
-    });
-    setStepStacking(0, -1);
-
-    if (activeTimeline) {
-      activeTimeline.kill();
-      activeTimeline = null;
-    }
-
-    activeTimeline = gsap.timeline({
-      onComplete: () => {
-        activeTimeline = null;
-      },
-    });
-
-    steps.forEach(({ step, banner }, index) => {
-      const y = targetY(index, 0);
-      activeTimeline.to(step, { y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
-      if (banner) {
-        activeTimeline.to(banner, { y: -y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
-      }
-    });
-
-    if (incomingBanner) {
-      tweenClipReveal(
-        activeTimeline,
-        incomingBanner,
-        1,
-        100,
-        0,
-        SLIDE_DURATION,
-        SLIDE_EASE,
-        0,
-        true
-      );
-    }
+    entranceRevealed = false;
   }
 
-  function playExitStep(onComplete) {
-    if (!entered) {
-      onComplete?.();
-      return;
-    }
-    entered = false;
-
-    if (currentActiveIndex !== 0 || activeTimeline) {
-      if (activeTimeline) {
-        activeTimeline.kill();
-        activeTimeline = null;
-      }
-      reportWipeProgress(0);
-      primeEntranceState();
-      onComplete?.();
-      return;
-    }
-
-    const outgoingBanner = steps[0]?.banner;
-    currentActiveIndex = -1;
-    steps.forEach(({ step }) => {
-      step.style.pointerEvents = "none";
-    });
-
-    activeTimeline = gsap.timeline({
+  function playEntranceReveal() {
+    if (entranceRevealed || !firstBanner) return;
+    entranceRevealed = true;
+    if (entranceTween) entranceTween.kill();
+    entranceTween = gsap.timeline({
       onComplete: () => {
-        activeTimeline = null;
-        primeEntranceState();
+        entranceTween = null;
+        section.dispatchEvent(
+          new CustomEvent("explain-steps:entrance-revealed", { bubbles: true })
+        );
       },
     });
-
-    steps.forEach(({ step, banner }, index) => {
-      const y = targetY(index, -1);
-      activeTimeline.to(step, { y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
-      if (banner) {
-        activeTimeline.to(banner, { y: -y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
-      }
-    });
-
-    if (outgoingBanner) {
-      tweenClipReveal(
-        activeTimeline,
-        outgoingBanner,
-        1,
-        0,
-        100,
-        SLIDE_DURATION,
-        SLIDE_EASE,
-        0,
-        true
-      );
-    }
-
-    const fireAt = Math.max(0, SLIDE_DURATION - LEAVE_HOME_OVERLAP);
-    activeTimeline.call(() => onComplete?.(), [], fireAt);
+    tweenClipReveal(entranceTween, firstBanner, 1, 100, 0, ENTRANCE_DURATION, ENTRANCE_EASE, 0, true);
   }
 
-  section.addEventListener("home-header:enter-next", playEntranceStep);
-  section.addEventListener("home-header:enter-home", (e) => {
-    playExitStep(e.detail?.onComplete);
+  // Symétrique de playEntranceReveal — referme le banner en wipe inverse
+  // quand on repart vers home. Remet entranceRevealed à false pour que
+  // l'entrée puisse rejouer si on redescend ensuite.
+  function playEntranceHide() {
+    if (!entranceRevealed || !firstBanner) return;
+    entranceRevealed = false;
+    if (entranceTween) entranceTween.kill();
+    entranceTween = gsap.timeline({ onComplete: () => (entranceTween = null) });
+    tweenClipReveal(entranceTween, firstBanner, 1, 0, 100, ENTRANCE_DURATION, ENTRANCE_EASE, 0, true);
+  }
+
+  // Déclenchée par home-header.js (avec un léger recouvrement avant la fin
+  // de son propre snap) plutôt que par le seuil onEnter du ScrollTrigger —
+  // ça évite toute dépendance à la vitesse de scroll une fois déverrouillé.
+  section.addEventListener("home-header:enter-next", playEntranceReveal);
+  section.addEventListener("home-header:enter-home", () => {
+    if (currentActiveIndex === 0) playEntranceHide();
   });
 
-  function applyStaticState() {
-    if (activeTimeline) {
-      activeTimeline.kill();
-      activeTimeline = null;
+  let currentActiveIndex = 0;
+  let activeTween = null;
+  let locked = false;
+  let queuedDelta = 0;
+  let lastWheelTime = 0;
+  let gestureBroken = false;
+
+  function onWheel(e) {
+    if (!locked) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    const now = performance.now();
+    if (now - lastWheelTime > GESTURE_GAP_MS) {
+      gestureBroken = true;
     }
-    lenisStart();
-    steps.forEach(({ banner }) => {
-      if (banner) gsap.set(banner, { xPercent: -50, yPercent: -50 });
-    });
-    setStepsImmediate(total - 1);
-    entered = true;
+    lastWheelTime = now;
+
+    if (gestureBroken) {
+      queuedDelta += e.deltaY;
+    }
+  }
+  let touchStartY = 0;
+  function onTouchStart(e) {
+    touchStartY = e.touches[0]?.clientY ?? 0;
+  }
+  function onTouchMove(e) {
+    if (!locked) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    const now = performance.now();
+    if (now - lastWheelTime > GESTURE_GAP_MS) gestureBroken = true;
+    lastWheelTime = now;
+
+    const currentY = e.touches[0]?.clientY ?? touchStartY;
+    if (gestureBroken) queuedDelta += touchStartY - currentY;
+    touchStartY = currentY;
+  }
+  function onKeyDown(e) {
+    if (!locked) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      gestureBroken = true;
+      queuedDelta += QUEUED_SCROLL_THRESHOLD;
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      gestureBroken = true;
+      queuedDelta -= QUEUED_SCROLL_THRESHOLD;
+    }
+  }
+  window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+  window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+  window.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+  window.addEventListener("keydown", onKeyDown, { capture: true });
+
+  function bandCenter(nextIndex) {
+    return trigger.start + nextIndex * bandStep + bandStep / 2;
   }
 
-  function applyMobileFlowState() {
-    if (activeTimeline) {
-      activeTimeline.kill();
-      activeTimeline = null;
-    }
-    lenisStart();
+  function stepToward(nextIndex) {
+    locked = true;
+    queuedDelta = 0;
+    lastWheelTime = performance.now();
+    gestureBroken = false;
+    lenisStop();
 
-    steps.forEach(({ step, banner }) => {
-      gsap.set(step, { clearProps: "all" });
-      step.style.pointerEvents = "";
-      step.style.zIndex = "";
-
-      if (banner) {
-        killWipeTween(banner);
-        gsap.killTweensOf(banner);
-        gsap.set(banner, { clearProps: "all" });
-        banner.style.pointerEvents = "";
-      }
-    });
-
-    currentActiveIndex = -1;
-    entered = true;
-  }
-
-  function bandCenter(trigger, stepIndex) {
-    if (stepIndex === 0) {
-      return trigger.start + headerOverlap / 2;
-    }
-    const bandStart = headerOverlap + (stepIndex - 1) * bandStep;
-    return trigger.start + bandStart + bandStep / 2;
-  }
-
-  function stepToward(trigger, nextIndex) {
     const outgoingIndex = currentActiveIndex;
     const outgoingBanner = steps[outgoingIndex]?.banner;
     const incomingBanner = steps[nextIndex]?.banner;
@@ -399,205 +322,162 @@ export function initExplainSteps(root = document) {
       step.style.pointerEvents = index === nextIndex ? "auto" : "none";
     });
 
-    setStepStacking(nextIndex, outgoingIndex);
+    setStepStacking(dir > 0 ? nextIndex : outgoingIndex, dir > 0 ? outgoingIndex : nextIndex);
 
     steps.forEach(({ banner }, index) => {
       if (index === outgoingIndex || index === nextIndex) return;
       resetBannerNeutral(banner);
     });
 
-    if (outgoingBanner) {
-      killWipeTween(outgoingBanner);
-      gsap.killTweensOf(outgoingBanner);
-      gsap.set(outgoingBanner, { opacity: 1, clipPath: clipRevealed() });
-      outgoingBanner.style.pointerEvents = "none";
-    }
-    if (incomingBanner) {
-      killWipeTween(incomingBanner);
-      gsap.killTweensOf(incomingBanner);
-      gsap.set(incomingBanner, { opacity: 1, clipPath: clipHidden(dir) });
-      incomingBanner.style.pointerEvents = "auto";
+    if (dir > 0) {
+      if (outgoingBanner) {
+        killWipeTween(outgoingBanner);
+        gsap.killTweensOf(outgoingBanner);
+        gsap.set(outgoingBanner, { opacity: 1, clipPath: clipRevealed() });
+        outgoingBanner.style.pointerEvents = "none";
+      }
+      if (incomingBanner) {
+        killWipeTween(incomingBanner);
+        gsap.killTweensOf(incomingBanner);
+        gsap.set(incomingBanner, { opacity: 1, clipPath: clipHidden(dir) });
+        incomingBanner.style.pointerEvents = "auto";
+      }
+    } else {
+      if (outgoingBanner) {
+        killWipeTween(outgoingBanner);
+        gsap.killTweensOf(outgoingBanner);
+        gsap.set(outgoingBanner, { opacity: 1, clipPath: clipRevealed() });
+        outgoingBanner.style.pointerEvents = "none";
+      }
+      if (incomingBanner) {
+        killWipeTween(incomingBanner);
+        gsap.killTweensOf(incomingBanner);
+        gsap.set(incomingBanner, { opacity: 0, clipPath: clipRevealed() });
+        incomingBanner.style.pointerEvents = "auto";
+      }
     }
 
-    lenisStop();
-    gsap.set(
-      steps.flatMap(({ step, banner }) => (banner ? [step, banner] : [step])),
-      { willChange: "transform" }
+    console.log(
+      "[retour-diag] dir:",
+      dir,
+      "outgoingIndex:",
+      outgoingIndex,
+      "nextIndex:",
+      nextIndex,
+      "outgoingBanner z-index (step):",
+      outgoingBanner ? steps[outgoingIndex].step.style.zIndex : null,
+      "incomingBanner z-index (step):",
+      incomingBanner ? steps[nextIndex].step.style.zIndex : null,
+      "outgoing initial opacity/clip:",
+      outgoingBanner ? [outgoingBanner.style.opacity, outgoingBanner.style.clipPath] : null,
+      "incoming initial opacity/clip:",
+      incomingBanner ? [incomingBanner.style.opacity, incomingBanner.style.clipPath] : null
     );
 
-    activeTimeline = gsap.timeline({
+    if (activeTween) activeTween.kill();
+
+    activeTween = gsap.timeline({
       onComplete: () => {
-        activeTimeline = null;
-        if (outgoingBanner) {
-          resetBannerNeutral(outgoingBanner);
-        }
+        activeTween = null;
+        if (outgoingBanner) resetBannerNeutral(outgoingBanner);
         setStepStacking(nextIndex, -1);
-        gsap.set(
-          steps.flatMap(({ step, banner }) => (banner ? [step, banner] : [step])),
-          { willChange: "auto" }
-        );
-        scrollTo(bandCenter(trigger, nextIndex));
-        gsap.delayedCall(UNSTOP_DELAY, lenisStart);
+        forceScrollTo(bandCenter(nextIndex));
+
+        const queuedDir = Math.abs(queuedDelta) >= QUEUED_SCROLL_THRESHOLD ? Math.sign(queuedDelta) : 0;
+        const queuedTarget = Math.max(0, Math.min(total - 1, nextIndex + queuedDir));
+
+        gsap.delayedCall(UNSTOP_DELAY, () => {
+          lenisStart();
+          locked = false;
+          if (queuedDir !== 0 && queuedTarget !== nextIndex) {
+            stepToward(queuedTarget);
+          }
+        });
       },
     });
 
     steps.forEach(({ step, banner }, index) => {
       const y = targetY(index, nextIndex);
-      activeTimeline.to(step, { y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
+      activeTween.to(step, { y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
       if (banner) {
-        activeTimeline.to(banner, { y: -y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
+        activeTween.to(banner, { y: -y, duration: SLIDE_DURATION, ease: SLIDE_EASE }, 0);
       }
     });
 
-    if (incomingBanner) {
-      tweenClipReveal(activeTimeline, incomingBanner, dir, 100, 0, SLIDE_DURATION, SLIDE_EASE, 0);
-    }
-
-    if (outgoingBanner) {
-      activeTimeline.to(
-        outgoingBanner,
-        { opacity: 0, duration: SLIDE_DURATION, ease: SLIDE_EASE },
-        0
-      );
-    }
-  }
-
-  function computeIndexFromProgress(trigger, progress) {
-    const totalDistance = trigger.end - trigger.start;
-    const traveled = progress * totalDistance;
-    if (traveled < headerOverlap) return 0;
-
-    const idx = 1 + Math.floor((traveled - headerOverlap) / bandStep);
-    return Math.min(total - 1, idx);
-  }
-
-  function updateStep(trigger, progress, immediate = false) {
-    const targetIndex = computeIndexFromProgress(trigger, progress);
-
-    if (immediate) {
-      setStepsImmediate(targetIndex);
-      return;
-    }
-
-    if (currentActiveIndex === -1) return;
-    if (activeTimeline) return;
-    if (targetIndex === currentActiveIndex) return;
-
-    const dir = targetIndex > currentActiveIndex ? 1 : -1;
-    stepToward(trigger, currentActiveIndex + dir);
-  }
-
-  function createScrollAnimation() {
-    currentActiveIndex = -1;
-    activeTimeline = null;
-    entered = false;
-    headerOverlap = Math.abs(parseFloat(section.style.marginTop)) || 0;
-    bandStep = window.innerHeight * 0.8;
-
-    steps.forEach(({ banner }) => {
-      if (banner) gsap.set(banner, { xPercent: -50, yPercent: -50 });
-    });
-
-    const trigger = ScrollTrigger.create({
-      id: "explain-steps",
-      trigger: section,
-      start: "top top+=1",
-      end: () => "+=" + (headerOverlap + Math.max(0, total - 1) * bandStep),
-      pin: true,
-      pinType: "transform",
-      pinSpacing: true,
-      scrub: 0.5,
-      anticipatePin: 1,
-      invalidateOnRefresh: true,
-      onUpdate: (self) => updateStep(trigger, self.progress),
-      onLeaveBack: () => {
-        section.dispatchEvent(
-          new CustomEvent("explain-steps:leave-back", { bubbles: true })
+    if (dir > 0) {
+      if (incomingBanner) {
+        tweenClipReveal(activeTween, incomingBanner, dir, 100, 0, MASK_DURATION, MASK_EASE, 0);
+      }
+      if (outgoingBanner) {
+        activeTween.to(
+          outgoingBanner,
+          { opacity: 0, duration: MASK_DURATION, ease: MASK_EASE },
+          0
         );
-      },
-      onRefresh: () => setPinStackOrder(section, 1),
-    });
-
-    setPinStackOrder(section, 1);
-    primeEntranceState();
-
-    return trigger;
-  }
-
-  function onKeyDown(e) {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    if (mobileMq.matches) return;
-    if (prefersReducedMotion()) return;
-    if (!st || !st.isActive) return;
-    if (currentActiveIndex === -1) return;
-
-    e.preventDefault();
-
-    if (activeTimeline) return;
-
-    const dir = e.key === "ArrowDown" ? 1 : -1;
-    const nextIndex = currentActiveIndex + dir;
-
-    if (nextIndex < 0) {
-      section.dispatchEvent(new CustomEvent("explain-steps:leave-back", { bubbles: true }));
-      return;
-    }
-
-    if (nextIndex >= total) {
-      st.disable(false);
-
-      const targetY = st.end + 2;
-      const finish = () => {
-        st.enable();
-        ScrollTrigger.refresh();
-      };
-
-      if (window.lenis) {
-        window.lenis.scrollTo(targetY, {
-          duration: SLIDE_DURATION,
-          easing: easeInOutCubic,
-          onComplete: finish,
-        });
-      } else {
-        window.scrollTo({ top: targetY, behavior: "smooth" });
-        setTimeout(finish, SLIDE_DURATION * 1000 + 100);
       }
-      return;
-    }
-
-    stepToward(st, nextIndex);
-  }
-
-  window.addEventListener("keydown", onKeyDown, { capture: true });
-
-  function setup() {
-    if (st) {
-      st.kill();
-      st = null;
-    }
-    lenisStart();
-
-    if (mobileMq.matches) {
-      st = null;
-      applyMobileFlowState();
-      return;
-    }
-
-    if (prefersReducedMotion()) {
-      applyStaticState();
     } else {
-      st = createScrollAnimation();
-      ScrollTrigger.refresh();
+      if (outgoingBanner) {
+        tweenClipReveal(activeTween, outgoingBanner, 1, 0, 100, MASK_DURATION, MASK_EASE, 0);
+      }
+      if (incomingBanner) {
+        activeTween.to(
+          incomingBanner,
+          { opacity: 1, duration: MASK_DURATION, ease: MASK_EASE },
+          0
+        );
+      }
     }
   }
 
-  setup();
-  onMotionPreferenceChange(setup);
+  gsap.set(stepEls, { position: "absolute", inset: 0 });
+  primeEntranceState();
 
-  mobileMq.addEventListener("change", () => {
-    if (!document.body.contains(section)) return;
-    setup();
+  const bandStep = window.innerHeight * 0.8;
+
+  function computeIndexFromProgress(progress) {
+    const totalDistance = bandStep * total;
+    const traveled = progress * totalDistance;
+    const idx = Math.floor(traveled / bandStep);
+    return Math.max(0, Math.min(total - 1, idx));
+  }
+
+  const trigger = ScrollTrigger.create({
+    id: "explain-steps",
+    trigger: section,
+    start: "top top",
+    end: () => "+=" + bandStep * total,
+    pin: true,
+    pinType: "transform",
+    pinSpacing: true,
+    scrub: true,
+    invalidateOnRefresh: true,
+    onRefresh: (self) => setPinStackOrder(section, self.isActive ? 1 : 0),
+    onEnter: () => {
+      setPinStackOrder(section, 1);
+    },
+    onEnterBack: () => {
+      setPinStackOrder(section, 1);
+      playEntranceReveal();
+    },
+    onLeave: () => setPinStackOrder(section, 0),
+    onLeaveBack: () => {
+      setPinStackOrder(section, 0);
+      if (currentActiveIndex === 0) {
+        if (entranceTween) entranceTween.kill();
+        entranceTween = null;
+        primeEntranceState();
+      }
+    },
+    onUpdate: (self) => {
+      if (activeTween) return;
+      const targetIndex = computeIndexFromProgress(self.progress);
+      if (targetIndex === currentActiveIndex) return;
+      const dir = targetIndex > currentActiveIndex ? 1 : -1;
+      stepToward(currentActiveIndex + dir);
+    },
   });
 
-  return st;
+  setPinStackOrder(section, 0);
+
+  return trigger;
 }

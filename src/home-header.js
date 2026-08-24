@@ -8,22 +8,21 @@ const OWNER_ID = "home-header-snap";
 
 const BOUNDARY_TOLERANCE = 60;
 const TOUCH_SWIPE_THRESHOLD = 40;
+const MOBILE_BREAKPOINT = 767;
 
 const SCROLL_DURATION = 1.6;
 const NATIVE_SCROLL_TIMEOUT = 1800;
 const HARD_UNLOCK_FAILSAFE = 3000;
-const MOBILE_BREAKPOINT = 767;
+
+const CONTENT_DURATION = SCROLL_DURATION * 0.35;
+const CONTENT_EASE = "power3.inOut";
+const CONTENT_TRANSLATE_Y = 20;
+const RETURN_CONTENT_OVERLAP = 0.6;
+const ENTER_NEXT_OVERLAP = 0.3;
 
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
-
-const CONTENT_DURATION = SCROLL_DURATION * 0.55;
-const CONTENT_EASE = "power3.inOut";
-const CONTENT_STAGGER = 0;
-const CONTENT_TRANSLATE_Y = 60;
-const FORWARD_TRANSITION_DURATION = Math.max(CONTENT_DURATION * 2, SCROLL_DURATION);
-const ENTER_NEXT_OVERLAP = 0.6;
 
 function setPinStackOrder(section, zIndexValue) {
   gsap.set(section, { zIndex: zIndexValue });
@@ -64,40 +63,44 @@ export function initHomeHeaderSnap(root = document) {
   section.dataset.snapInit = "1";
 
   const next = section.nextElementSibling;
-  if (!next) return;
 
-  const controller = new AbortController();
-  const { signal } = controller;
+  const contentWrapper = section.querySelector(":scope > .home-header--content");
+  const contentEls = contentWrapper
+    ? Array.from(
+        contentWrapper.querySelectorAll(
+          ":scope > .home-header--title, :scope > .home-header-banner, :scope > .home-header-content"
+        )
+      )
+    : [];
 
-  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
-
-  let pinTrigger = null;
-
-  function syncOverlap() {
-    if (mobileMq.matches) {
-      gsap.set(next, { clearProps: "marginTop" });
-      return;
-    }
-    gsap.set(next, { marginTop: -section.offsetHeight });
-  }
-  window.addEventListener("resize", syncOverlap, { signal });
+  const shapeEl = contentWrapper?.querySelector(":scope > .home-header-bg-shape") ?? null;
 
   function getShapeTargetSize() {
+    if (!next) return { width: 0, height: 0, borderRadius: "0px" };
     const banner =
-      next.querySelector(":scope > .explain-step:first-child > .explain-step-banner") ||
-      next.querySelector(".explain-step-banner");
-    if (!banner) return { width: 0, height: 0 };
+      next.querySelector(
+        ":scope > .explain--content > .explain-step:first-child > .explain-step-banner"
+      ) || next.querySelector(".explain-step-banner");
+    if (!banner) return { width: 0, height: 0, borderRadius: "0px" };
     const rect = banner.getBoundingClientRect();
-    return { width: rect.width, height: rect.height };
+    const borderRadius = getComputedStyle(banner).borderRadius;
+    return { width: rect.width, height: rect.height, top: rect.top, left: rect.left, borderRadius };
   }
 
-  const contentEls = Array.from(
-    section.querySelectorAll(
-      ":scope > .home-header--title, :scope > .home-header-banner, :scope > .home-header-content"
-    )
-  );
+  function computeInitialShapeSize() {
+    const target = getShapeTargetSize();
+    const sectionWidth = section.offsetWidth || 1;
+    const sectionHeight = section.offsetHeight || 1;
+    const aspect = target.width && target.height ? target.width / target.height : sectionWidth / sectionHeight;
 
-  const shapeEl = section.querySelector(":scope > .home-header-bg-shape");
+    if (sectionWidth / sectionHeight > aspect) {
+      return { width: sectionWidth, height: sectionWidth / aspect };
+    }
+    return { width: sectionHeight * aspect, height: sectionHeight };
+  }
+
+  const initialShapeSize = shapeEl ? computeInitialShapeSize() : { width: 0, height: 0 };
+
   if (shapeEl) {
     gsap.set(shapeEl, {
       position: "absolute",
@@ -105,38 +108,35 @@ export function initHomeHeaderSnap(root = document) {
       left: "50%",
       xPercent: -50,
       yPercent: -50,
-      width: "100%",
-      height: "100%",
+      width: initialShapeSize.width,
+      height: initialShapeSize.height,
     });
   }
 
-  function applyShapeProgress(revealedFraction) {
-    if (!shapeEl) return;
-    const clamped = Math.max(0, Math.min(1, revealedFraction));
-    const target = getShapeTargetSize();
-    const fullWidth = section.offsetWidth;
-    const fullHeight = section.offsetHeight;
+  const initialShapeBorderRadius = shapeEl
+    ? getComputedStyle(shapeEl).borderRadius || "0px"
+    : "0px";
 
-    const width = fullWidth + (target.width - fullWidth) * clamped;
-    const height = fullHeight + (target.height - fullHeight) * clamped;
+  const controller = new AbortController();
+  const { signal } = controller;
 
-    gsap.set(shapeEl, {
-      width,
-      height,
-      display: clamped >= 0.999 ? "none" : "",
-    });
-  }
+  next?.addEventListener(
+    "explain-steps:entrance-revealed",
+    () => {
+      if (shapeEl) gsap.set(shapeEl, { display: "none" });
+    },
+    { signal }
+  );
 
-  setShapeFollower(applyShapeProgress);
-  signal.addEventListener("abort", () => setShapeFollower(null));
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
+  let pinTrigger = null;
   let locked = false;
-  let scrollToken = 0;
   let nativeTimeoutId = null;
   let nativeScrollEndHandler = null;
   let failsafeTimeoutId = null;
-  let transitionTimeline = null;
-  let enterNextDelayedCall = null;
+  let transitionTween = null;
+  let fadeInDelayedCall = null;
 
   let activeSide = window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE ? "home" : "next";
 
@@ -152,10 +152,14 @@ export function initHomeHeaderSnap(root = document) {
     return window.scrollY <= BOUNDARY_TOLERANCE;
   }
 
-  function isAtExplainTopBoundary() {
+  function isAtHomeHeaderBottomBoundary() {
     const explainTrigger = ScrollTrigger.getById("explain-steps");
-    if (!explainTrigger) return false;
-    return window.scrollY <= explainTrigger.start + BOUNDARY_TOLERANCE;
+    if (explainTrigger) {
+      const bandStep = window.innerHeight * 0.8;
+      const band0Center = explainTrigger.start + bandStep / 2;
+      return window.scrollY <= band0Center + BOUNDARY_TOLERANCE;
+    }
+    return window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE;
   }
 
   function clearWatchers() {
@@ -171,93 +175,146 @@ export function initHomeHeaderSnap(root = document) {
       clearTimeout(failsafeTimeoutId);
       failsafeTimeoutId = null;
     }
-    if (enterNextDelayedCall) {
-      enterNextDelayedCall.kill();
-      enterNextDelayedCall = null;
+    if (fadeInDelayedCall) {
+      fadeInDelayedCall.kill();
+      fadeInDelayedCall = null;
     }
   }
 
-  function unlock(myToken) {
-    if (myToken !== scrollToken) return;
+  function unlock() {
     clearWatchers();
     locked = false;
     releaseScrollLock(OWNER_ID);
   }
 
-  function playTransitions(direction, onFinished) {
-    if (transitionTimeline) {
-      transitionTimeline.kill();
-      transitionTimeline = null;
+  function playFadeOut(onComplete) {
+    if (transitionTween) {
+      transitionTween.kill();
+      transitionTween = null;
     }
     gsap.killTweensOf(contentEls);
 
-    const tl = gsap.timeline({
+    if (!contentEls.length || prefersReducedMotion()) {
+      onComplete?.();
+      return;
+    }
+
+    transitionTween = gsap.to(contentEls, {
+      y: -CONTENT_TRANSLATE_Y,
+      opacity: 0,
+      duration: CONTENT_DURATION,
+      ease: CONTENT_EASE,
       onComplete: () => {
-        transitionTimeline = null;
-        onFinished?.();
+        transitionTween = null;
+        onComplete?.();
       },
     });
+  }
 
-    if (direction === 1) {
-      tl.to(contentEls, {
-        y: CONTENT_TRANSLATE_Y,
-        opacity: 0,
+  function playFadeIn(onComplete) {
+    if (transitionTween) {
+      transitionTween.kill();
+      transitionTween = null;
+    }
+    gsap.killTweensOf(contentEls);
+
+    if (!contentEls.length || prefersReducedMotion()) {
+      gsap.set(contentEls, { clearProps: "all" });
+      onComplete?.();
+      return;
+    }
+
+    transitionTween = gsap.fromTo(
+      contentEls,
+      { y: -CONTENT_TRANSLATE_Y, opacity: 0 },
+      {
+        y: 0,
+        opacity: 1,
         duration: CONTENT_DURATION,
         ease: CONTENT_EASE,
-        stagger: CONTENT_STAGGER,
-      });
-    } else {
-      tl.fromTo(
-        contentEls,
-        { y: CONTENT_TRANSLATE_Y, opacity: 0 },
-        {
-          y: 0,
-          opacity: 1,
-          duration: CONTENT_DURATION,
-          ease: CONTENT_EASE,
-          stagger: CONTENT_STAGGER,
-        }
-      );
+        onComplete: () => {
+          transitionTween = null;
+          onComplete?.();
+        },
+      }
+    );
+  }
+
+  function applyShapeProgress(fraction) {
+    if (!shapeEl) return;
+    const clamped = Math.max(0, Math.min(1, fraction));
+    const target = getShapeTargetSize();
+    const containingRect = (shapeEl.offsetParent || section).getBoundingClientRect();
+
+    const width = initialShapeSize.width + (target.width - initialShapeSize.width) * clamped;
+    const height = initialShapeSize.height + (target.height - initialShapeSize.height) * clamped;
+    const borderRadius = gsap.utils.interpolate(
+      initialShapeBorderRadius,
+      target.borderRadius,
+      clamped
+    );
+
+    const initialCenterX = containingRect.width / 2;
+    const initialCenterY = containingRect.height / 2;
+    const targetCenterX = target.left + target.width / 2 - containingRect.left;
+    const targetCenterY = target.top + target.height / 2 - containingRect.top;
+    const left = initialCenterX + (targetCenterX - initialCenterX) * clamped;
+    const top = initialCenterY + (targetCenterY - initialCenterY) * clamped;
+
+    gsap.set(shapeEl, { width, height, borderRadius, top, left, xPercent: -50, yPercent: -50 });
+  }
+
+  setShapeFollower(applyShapeProgress);
+  signal.addEventListener("abort", () => setShapeFollower(null));
+
+  function playShapeGrow(onComplete) {
+    if (!shapeEl) {
+      onComplete?.();
+      return;
     }
-
-    transitionTimeline = tl;
+    if (prefersReducedMotion()) {
+      applyShapeProgress(1);
+    }
+    onComplete?.();
   }
 
-  function resolveScrollTarget(direction) {
-    return direction === -1 ? pinTrigger.start : section.offsetHeight;
+  function playShapeShrink(onComplete) {
+    if (!shapeEl) {
+      onComplete?.();
+      return;
+    }
+    gsap.set(shapeEl, { display: "block" });
+    if (prefersReducedMotion()) {
+      applyShapeProgress(0);
+    }
+    onComplete?.();
   }
 
-  function scrollToTarget(direction) {
-    clearWatchers();
-
+  function scrollToBottom() {
     locked = true;
-    activeSide = direction === 1 ? "next" : "home";
+    activeSide = "next";
     acquireScrollLock(OWNER_ID);
-    const myToken = ++scrollToken;
 
-    if (direction === 1) {
-      const fireAt = Math.max(0, FORWARD_TRANSITION_DURATION - ENTER_NEXT_OVERLAP);
-      enterNextDelayedCall = gsap.delayedCall(fireAt, () => {
-        enterNextDelayedCall = null;
-        if (myToken !== scrollToken) return;
-        next.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
-      });
-    }
-
-    let pending = 2;
+    let pending = 3;
     function completeOne() {
       pending -= 1;
-      if (pending <= 0) unlock(myToken);
+      if (pending <= 0) unlock();
     }
 
-    playTransitions(direction, completeOne);
+    playFadeOut(completeOne);
+    playShapeGrow(completeOne);
 
-    failsafeTimeoutId = setTimeout(() => unlock(myToken), HARD_UNLOCK_FAILSAFE);
+    const fireAt = Math.max(0, SCROLL_DURATION - ENTER_NEXT_OVERLAP);
+    gsap.delayedCall(fireAt, () => {
+      next?.dispatchEvent(new CustomEvent("home-header:enter-next", { bubbles: true }));
+    });
 
-    const scrollTarget = resolveScrollTarget(direction);
+    failsafeTimeoutId = setTimeout(unlock, HARD_UNLOCK_FAILSAFE);
+
+    const targetY = section.offsetHeight;
 
     if (window.lenis) {
-      window.lenis.scrollTo(scrollTarget, {
+      window.lenis.scrollTo(targetY, {
         duration: SCROLL_DURATION,
         easing: easeInOutCubic,
         onComplete: completeOne,
@@ -265,7 +322,6 @@ export function initHomeHeaderSnap(root = document) {
       return;
     }
 
-    const targetY = direction === -1 ? pinTrigger.start : section.offsetHeight;
     window.scrollTo({ top: targetY, behavior: "smooth" });
 
     if ("onscrollend" in window) {
@@ -282,25 +338,60 @@ export function initHomeHeaderSnap(root = document) {
     }
   }
 
-  function triggerLeaveToHome() {
-    if (activeSide !== "next") return;
-    if (locked) return;
-    if (isScrollLocked(OWNER_ID)) return;
-
+  function scrollToTop() {
     locked = true;
+    activeSide = "home";
     acquireScrollLock(OWNER_ID);
 
-    next.dispatchEvent(
-      new CustomEvent("home-header:enter-home", {
-        bubbles: true,
-        detail: {
-          onComplete: () => scrollToTarget(-1),
-        },
-      })
-    );
-  }
+    next?.dispatchEvent(new CustomEvent("home-header:enter-home", { bubbles: true }));
 
-  next.addEventListener("explain-steps:leave-back", triggerLeaveToHome, { signal });
+    const returnFailsafe = (SCROLL_DURATION + CONTENT_DURATION + 0.5) * 1000;
+    failsafeTimeoutId = setTimeout(unlock, returnFailsafe);
+
+    let pending = 3;
+    function completeOne() {
+      pending -= 1;
+      if (pending <= 0) unlock();
+    }
+
+    playShapeShrink(completeOne);
+
+    const targetY = 0;
+
+    const fireFadeInAt = Math.max(0, SCROLL_DURATION - RETURN_CONTENT_OVERLAP);
+    fadeInDelayedCall = gsap.delayedCall(fireFadeInAt, () => {
+      fadeInDelayedCall = null;
+      playFadeIn(completeOne);
+    });
+
+    function afterScroll() {
+      completeOne();
+    }
+
+    if (window.lenis) {
+      window.lenis.scrollTo(targetY, {
+        duration: SCROLL_DURATION,
+        easing: easeInOutCubic,
+        onComplete: afterScroll,
+      });
+      return;
+    }
+
+    window.scrollTo({ top: targetY, behavior: "smooth" });
+
+    if ("onscrollend" in window) {
+      nativeScrollEndHandler = () => {
+        nativeScrollEndHandler = null;
+        afterScroll();
+      };
+      window.addEventListener("scrollend", nativeScrollEndHandler, { once: true });
+    } else {
+      nativeTimeoutId = setTimeout(() => {
+        nativeTimeoutId = null;
+        afterScroll();
+      }, NATIVE_SCROLL_TIMEOUT);
+    }
+  }
 
   function onWheel(e) {
     if (mobileMq.matches) return;
@@ -319,14 +410,14 @@ export function initHomeHeaderSnap(root = document) {
       if (!isAtHomeHeaderTop()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      scrollToTarget(1);
+      scrollToBottom();
     } else if (e.deltaY < 0) {
       if (isScrollLocked(OWNER_ID)) return;
       if (activeSide !== "next") return;
-      if (!isAtExplainTopBoundary()) return;
+      if (!isAtHomeHeaderBottomBoundary()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      triggerLeaveToHome();
+      scrollToTop();
     }
   }
 
@@ -358,19 +449,19 @@ export function initHomeHeaderSnap(root = document) {
       if (!isAtHomeHeaderTop()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      scrollToTarget(1);
+      scrollToBottom();
     } else if (deltaY <= -TOUCH_SWIPE_THRESHOLD) {
       if (isScrollLocked(OWNER_ID)) return;
       if (activeSide !== "next") return;
-      if (!isAtExplainTopBoundary()) return;
+      if (!isAtHomeHeaderBottomBoundary()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      triggerLeaveToHome();
+      scrollToTop();
     }
   }
 
   function onKeyDown(e) {
-    if (e.key !== "ArrowDown") return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     if (mobileMq.matches) return;
     if (cleanupIfDetached()) return;
     if (prefersReducedMotion()) return;
@@ -381,11 +472,18 @@ export function initHomeHeaderSnap(root = document) {
     }
 
     if (isScrollLocked(OWNER_ID)) return;
-    if (activeSide !== "home") return;
-    if (!isAtHomeHeaderTop()) return;
 
-    e.preventDefault();
-    scrollToTarget(1);
+    if (e.key === "ArrowDown") {
+      if (activeSide !== "home") return;
+      if (!isAtHomeHeaderTop()) return;
+      e.preventDefault();
+      scrollToBottom();
+    } else {
+      if (activeSide !== "next") return;
+      if (!isAtHomeHeaderBottomBoundary()) return;
+      e.preventDefault();
+      scrollToTop();
+    }
   }
 
   window.addEventListener("wheel", onWheel, { capture: true, passive: false, signal });
@@ -394,9 +492,9 @@ export function initHomeHeaderSnap(root = document) {
   window.addEventListener("keydown", onKeyDown, { capture: true, signal });
 
   function resetToClassicMobileState() {
-    if (transitionTimeline) {
-      transitionTimeline.kill();
-      transitionTimeline = null;
+    if (transitionTween) {
+      transitionTween.kill();
+      transitionTween = null;
     }
     clearWatchers();
     locked = false;
@@ -407,7 +505,7 @@ export function initHomeHeaderSnap(root = document) {
 
     if (shapeEl) {
       gsap.killTweensOf(shapeEl);
-      gsap.set(shapeEl, { clearProps: "width,height,display" });
+      gsap.set(shapeEl, { clearProps: "width,height,display,borderRadius" });
     }
 
     activeSide = "home";
@@ -423,7 +521,6 @@ export function initHomeHeaderSnap(root = document) {
     } else if (!pinTrigger) {
       pinTrigger = createHomeHeaderPin(section);
     }
-    syncOverlap();
   }
 
   setPinMode(mobileMq.matches);
