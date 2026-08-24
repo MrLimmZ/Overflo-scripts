@@ -7,5 +7,6 @@ export function initTrioReveal(root = document) {
     sectionSelector: ".trio",
     itemSelector: ".trio-item",
     initFlag: "trioRevealInit",
+    start: "top top",
   });
 }
