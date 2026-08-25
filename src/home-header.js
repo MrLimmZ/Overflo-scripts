@@ -55,6 +55,8 @@ export function initHomeHeaderSnap(root = document) {
   if (section.dataset.snapInit) return;
   section.dataset.snapInit = "1";
 
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+
   const next = section.nextElementSibling;
 
   const contentWrapper = section.querySelector(":scope > .home-header--content");
@@ -95,8 +97,14 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   let initialShapeSize = shapeEl ? computeInitialShapeSize() : { width: 0, height: 0 };
+  let initialShapeBorderRadius = shapeEl
+    ? getComputedStyle(shapeEl).borderRadius || "0px"
+    : "0px";
 
-  if (shapeEl) {
+  function applyDesktopShapeBase() {
+    if (!shapeEl) return;
+    initialShapeSize = computeInitialShapeSize();
+    initialShapeBorderRadius = getComputedStyle(shapeEl).borderRadius || "0px";
     gsap.set(shapeEl, {
       position: "absolute",
       top: "50%",
@@ -108,17 +116,17 @@ export function initHomeHeaderSnap(root = document) {
     });
   }
 
-  let initialShapeBorderRadius = shapeEl
-    ? getComputedStyle(shapeEl).borderRadius || "0px"
-    : "0px";
+  if (!mobileMq.matches) {
+    applyDesktopShapeBase();
+  }
 
   const controller = new AbortController();
   const { signal } = controller;
 
   let explainActiveIndex = 0;
   let explainStepSettledAt = 0;
-  const EXIT_WHEEL_THRESHOLD = 15; // même seuil que explain-steps.js, pour un geste jugé "volontaire"
-  const EXIT_COOLDOWN_MS = 250; // laisse l'inertie du geste précédent (qui vient d'amener sur step1) se dissiper
+  const EXIT_WHEEL_THRESHOLD = 15;
+  const EXIT_COOLDOWN_MS = 250;
 
   next?.addEventListener(
     "explain-steps:step-changed",
@@ -139,8 +147,6 @@ export function initHomeHeaderSnap(root = document) {
     { signal }
   );
 
-  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
-
   let pinTrigger = null;
   let locked = false;
   let failsafeTimeoutId = null;
@@ -150,13 +156,6 @@ export function initHomeHeaderSnap(root = document) {
   let activeSide = window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE ? "home" : "next";
 
   function syncInitialShapeGeometry() {
-    // Check proactif : sans lui, une instance périmée ne se détache que
-    // lorsqu'un de SES PROPRES listeners wheel/touch/keydown se déclenche
-    // par hasard — ce qui peut prendre un moment (ou ne jamais arriver
-    // avant le prochain scroll). refreshInit se déclenche à chaque
-    // ScrollTrigger.refresh(), donc systématiquement en tout début de
-    // reinitModules() suivant : ça permet à l'instance périmée de
-    // s'auto-nettoyer dès la page suivante, sans attendre une interaction.
     if (cleanupIfDetached()) return;
     if (!shapeEl) return;
     initialShapeSize = computeInitialShapeSize();
@@ -304,10 +303,6 @@ export function initHomeHeaderSnap(root = document) {
 
   setShapeFollower(applyShapeProgress);
   signal.addEventListener("abort", () => {
-    // clearShapeFollower (pas setShapeFollower(null)) : n'efface que si
-    // applyShapeProgress est ENCORE le follower actif. Si ce cleanup arrive
-    // en retard (après qu'une instance plus récente a déjà pris le relais),
-    // il ne doit RIEN faire — sinon il écrase le bon follower en place.
     clearShapeFollower(applyShapeProgress);
   });
 
@@ -516,7 +511,7 @@ export function initHomeHeaderSnap(root = document) {
 
     if (shapeEl) {
       gsap.killTweensOf(shapeEl);
-      gsap.set(shapeEl, { clearProps: "width,height,display,borderRadius" });
+      gsap.set(shapeEl, { clearProps: "all" });
     }
 
     activeSide = "home";
@@ -529,12 +524,28 @@ export function initHomeHeaderSnap(root = document) {
         pinTrigger = null;
       }
       resetToClassicMobileState();
-    } else if (!pinTrigger) {
-      pinTrigger = createHomeHeaderPin(section);
+    } else {
+      applyDesktopShapeBase();
+      if (!pinTrigger) {
+        pinTrigger = createHomeHeaderPin(section);
+      }
     }
   }
 
+  function playLoadEntrance() {
+    if (!contentEls.length || prefersReducedMotion()) return;
+    gsap.fromTo(
+      contentEls,
+      { y: 60, opacity: 0 },
+      { y: 0, opacity: 1, duration: 1, ease: CONTENT_EASE }
+    );
+  }
+
   setPinMode(mobileMq.matches);
+
+  if (activeSide === "home") {
+    playLoadEntrance();
+  }
 
   mobileMq.addEventListener("change", () => {
     if (cleanupIfDetached()) return;

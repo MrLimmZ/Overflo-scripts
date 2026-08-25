@@ -1,7 +1,8 @@
-.blog-card-description {
+.blog-card-description, .blog-card-title {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .blog-list-empty {

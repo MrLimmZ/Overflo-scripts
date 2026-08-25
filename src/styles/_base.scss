@@ -32,3 +32,12 @@ img {
     animation: none !important;
   }
 }
+
+/* Reveal au scroll (utils/scroll-reveal.js) */
+.reinsurance-card,
+.icon-card,
+.blog-card,
+.help-card,
+.product-header-list-item {
+  opacity: 0;
+}

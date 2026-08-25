@@ -7,6 +7,5 @@ export function initBentoReveal(root = document) {
     sectionSelector: ".bento",
     itemSelector: ".reinsurance-card",
     initFlag: "bentoRevealInit",
-    start: "top top",
   });
 }

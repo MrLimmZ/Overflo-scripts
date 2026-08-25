@@ -114,6 +114,9 @@ export function initExplainSteps(root = document) {
   const total = stepEls.length + 1;
   if (total < 2) return;
 
+  const MOBILE_BREAKPOINT = 767;
+  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+
   const steps = [
     { step: virtualStepEl, banner: null },
     ...stepEls.map((step) => ({
@@ -183,7 +186,10 @@ export function initExplainSteps(root = document) {
   let lastWheelTime = 0;
   let gestureBroken = false;
   let pinReenteredAt = 0;
-  const REENTRY_COOLDOWN_MS = 250; // laisse l'inertie du geste qui vient de faire (ré)entrer dans le pin se dissiper
+  let boundarySettledAt = performance.now();
+  const REENTRY_COOLDOWN_MS = 250;
+  const BOUNDARY_COOLDOWN_MS = 250;
+  const BENTO_BOUNDARY_TOLERANCE = 60;
 
   const controller = new AbortController();
   const { signal } = controller;
@@ -196,20 +202,67 @@ export function initExplainSteps(root = document) {
     return false;
   }
 
-  // Étape suivante/précédente possible depuis currentActiveIndex, dans la
-  // direction dir (+1 ou -1) ? Mêmes bornes que onKeyDown : l'entrée/sortie
-  // vers l'index virtuel (0) reste gérée par home-header.js, pas ici. On
-  // bloque aussi tout déclenchement direct pendant le cooldown suivant une
-  // (ré)entrée dans le pin (ex: remontée depuis bento) — sinon l'inertie du
-  // geste qui vient de faire re-rentrer dans le pin recule instantanément
-  // l'étape, avant même que l'utilisateur n'ait "atterri" dessus.
   function canStepDirectly(dir) {
     if (performance.now() - pinReenteredAt < REENTRY_COOLDOWN_MS) return false;
     if (dir > 0) return currentActiveIndex >= 1 && currentActiveIndex < total - 1;
     return currentActiveIndex > 1;
   }
 
+  function snapToBento() {
+    locked = true;
+    lenisStop();
+    forceScrollTo(trigger.end);
+    boundarySettledAt = performance.now();
+    gsap.delayedCall(UNSTOP_DELAY, () => {
+      lenisStart();
+      locked = false;
+    });
+  }
+
+  function snapToLastStep() {
+    locked = true;
+    lenisStop();
+    forceScrollTo(bandCenter(total - 1));
+    pinReenteredAt = performance.now(); 
+    boundarySettledAt = performance.now();
+    gsap.delayedCall(UNSTOP_DELAY, () => {
+      lenisStart();
+      locked = false;
+    });
+  }
+
+  let wasNearBentoBoundary = false;
+
+  function onNativeScroll() {
+    if (mobileMq.matches) return;
+    if (locked) {
+      wasNearBentoBoundary = false;
+      return;
+    }
+    if (cleanupIfDetached()) return;
+
+    const y = window.scrollY;
+    const nearBoundary = Math.abs(y - trigger.end) <= BENTO_BOUNDARY_TOLERANCE;
+
+    if (!nearBoundary) {
+      wasNearBentoBoundary = false;
+      return;
+    }
+    if (wasNearBentoBoundary) return; // déjà dans la zone, pas un nouveau franchissement
+    wasNearBentoBoundary = true;
+
+    if (performance.now() - boundarySettledAt < BOUNDARY_COOLDOWN_MS) return;
+
+    window.lenis?.stop();
+    if (trigger.isActive) {
+      snapToBento();
+    } else {
+      snapToLastStep();
+    }
+  }
+
   function onWheel(e) {
+    if (mobileMq.matches) return;
     if (cleanupIfDetached()) return;
 
     if (locked) {
@@ -226,11 +279,6 @@ export function initExplainSteps(root = document) {
       return;
     }
 
-    // Pas verrouillé : on ne veut plus attendre que le scroll (lissé par
-    // Lenis) franchisse physiquement le seuil de la bande suivante — ça
-    // crée un délai perceptible entre le geste et le début de
-    // l'animation. On réagit directement au geste dès qu'il est assez
-    // franc, comme onKeyDown le fait déjà pour les flèches.
     if (!trigger.isActive) return;
     if (Math.abs(e.deltaY) < QUEUED_SCROLL_THRESHOLD) return;
     const dir = Math.sign(e.deltaY);
@@ -241,10 +289,12 @@ export function initExplainSteps(root = document) {
   }
   let touchStartY = 0;
   function onTouchStart(e) {
+    if (mobileMq.matches) return;
     if (cleanupIfDetached()) return;
     touchStartY = e.touches[0]?.clientY ?? 0;
   }
   function onTouchMove(e) {
+    if (mobileMq.matches) return;
     if (cleanupIfDetached()) return;
 
     if (locked) {
@@ -273,6 +323,7 @@ export function initExplainSteps(root = document) {
   }
   function onKeyDown(e) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    if (mobileMq.matches) return;
     if (cleanupIfDetached()) return;
 
     if (locked) {
@@ -302,6 +353,7 @@ export function initExplainSteps(root = document) {
   window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true, signal });
   window.addEventListener("touchmove", onTouchMove, { capture: true, passive: false, signal });
   window.addEventListener("keydown", onKeyDown, { capture: true, signal });
+  window.addEventListener("scroll", onNativeScroll, { passive: true, signal });
 
   function bandCenter(nextIndex) {
     return trigger.start + nextIndex * bandStep + bandStep / 2;
@@ -374,12 +426,7 @@ export function initExplainSteps(root = document) {
         if (outgoingBanner) resetBannerNeutral(outgoingBanner);
         setStepStacking(nextIndex, -1);
 
-        // Informe home-header.js de l'étape réellement active — sans ça,
-        // il ne peut deviner l'état que via window.scrollY, qui coïncide
-        // par construction avec la position de repos de step1
-        // (bandCenter(1) === son propre seuil de sortie vers home), donc
-        // le moindre petit tic de molette juste après l'arrivée sur
-        // step1 était pris pour une intention de sortie vers home.
+        boundarySettledAt = performance.now();
         section.dispatchEvent(
           new CustomEvent("explain-steps:step-changed", {
             bubbles: true,
@@ -403,11 +450,7 @@ export function initExplainSteps(root = document) {
         }
 
         const queuedDir = Math.abs(queuedDelta) >= QUEUED_SCROLL_THRESHOLD ? Math.sign(queuedDelta) : 0;
-        // La queue ne doit jamais faire descendre automatiquement vers
-        // l'étape virtuelle (0 = home) — cette transition-là reste
-        // réservée au lien explicite avec home-header.js
-        // (home-header:enter-home), pas à un enchaînement générique de
-        // scroll résiduel après un gros geste.
+
         const minQueuedTarget = nextIndex === 0 ? 0 : 1;
         const queuedTarget = Math.max(minQueuedTarget, Math.min(total - 1, nextIndex + queuedDir));
 
@@ -465,11 +508,7 @@ export function initExplainSteps(root = document) {
     }
   }
 
-  gsap.set(stepEls, { position: "absolute", inset: 0 });
-  gsap.set(virtualStepEl, { position: "absolute", inset: 0 });
-  setStepsImmediate(0);
-
-  const bandStep = window.innerHeight * 0.8;
+  let bandStep = window.innerHeight * 0.8;
 
   function computeIndexFromProgress(progress) {
     const totalDistance = bandStep * total;
@@ -478,47 +517,105 @@ export function initExplainSteps(root = document) {
     return Math.max(0, Math.min(total - 1, idx));
   }
 
-  const trigger = ScrollTrigger.create({
-    id: "explain-steps",
-    trigger: section,
-    start: "top top",
-    end: () => "+=" + bandStep * total,
-    pin: true,
-    pinType: "transform",
-    pinSpacing: true,
-    scrub: true,
-    anticipatePin: 1,
-    invalidateOnRefresh: true,
-    onRefresh: (self) => setPinStackOrder(section, self.isActive ? 1 : 0),
-    onEnter: () => {
-      setPinStackOrder(section, 1);
-      pinReenteredAt = performance.now();
-    },
-    onEnterBack: () => {
-      setPinStackOrder(section, 1);
-      pinReenteredAt = performance.now();
-    },
-    onLeave: () => setPinStackOrder(section, 0),
-    onLeaveBack: () => {
-      setPinStackOrder(section, 0);
-      if (!activeTween && currentActiveIndex === 0) {
-        setStepsImmediate(0);
-      }
-    },
-    onUpdate: (self) => {
-      // Filet de sécurité (scrollbar déplacée à la souris, scroll
-      // programmatique externe...) : le déclenchement normal passe
-      // maintenant par onWheel/onTouchMove/onKeyDown en direct, plus
-      // rapide que d'attendre ce onUpdate.
-      if (activeTween) return;
-      const targetIndex = computeIndexFromProgress(self.progress);
-      if (targetIndex === currentActiveIndex) return;
-      const dir = targetIndex > currentActiveIndex ? 1 : -1;
-      stepToward(currentActiveIndex + dir);
-    },
-  });
+  let trigger = null;
 
-  setPinStackOrder(section, 0);
+  let hasSetupOnce = false;
+
+  function setupDesktop() {
+    if (hasSetupOnce) {
+      window.scrollTo(0, section.offsetTop);
+      ScrollTrigger.update();
+    }
+
+    bandStep = window.innerHeight * 0.8;
+
+    virtualStepEl.style.display = "";
+    gsap.set(stepEls, { position: "absolute", inset: 0 });
+    gsap.set(virtualStepEl, { position: "absolute", inset: 0 });
+    setStepsImmediate(0);
+
+    trigger = ScrollTrigger.create({
+      id: "explain-steps",
+      trigger: section,
+      start: "top top",
+      end: () => "+=" + bandStep * total,
+      pin: true,
+      pinType: "transform",
+      pinSpacing: true,
+      scrub: true,
+      anticipatePin: 1,
+      invalidateOnRefresh: true,
+      onRefresh: (self) => setPinStackOrder(section, self.isActive ? 1 : 0),
+      onEnter: () => {
+        setPinStackOrder(section, 1);
+        pinReenteredAt = performance.now();
+      },
+      onEnterBack: () => {
+        setPinStackOrder(section, 1);
+        pinReenteredAt = performance.now();
+      },
+      onLeave: () => setPinStackOrder(section, 0),
+      onLeaveBack: () => {
+        setPinStackOrder(section, 0);
+        if (!activeTween && currentActiveIndex === 0) {
+          setStepsImmediate(0);
+        }
+      },
+      onUpdate: (self) => {
+        if (activeTween) return;
+        const targetIndex = computeIndexFromProgress(self.progress);
+        if (targetIndex === currentActiveIndex) return;
+        const dir = targetIndex > currentActiveIndex ? 1 : -1;
+        stepToward(currentActiveIndex + dir);
+      },
+    });
+
+    setPinStackOrder(section, 0);
+  }
+
+  function applyMobileStatic() {
+    if (trigger) {
+      trigger.kill();
+      trigger = null;
+    }
+    if (activeTween) {
+      activeTween.kill();
+      activeTween = null;
+    }
+    locked = false;
+    releaseScrollLock(OWNER_ID);
+
+    gsap.set([virtualStepEl, ...stepEls], { clearProps: "position,inset,zIndex,y" });
+    virtualStepEl.style.display = "none";
+
+    steps.forEach(({ step, banner }) => {
+      step.style.pointerEvents = "";
+      if (!banner) return;
+      killWipeTween(banner);
+      gsap.killTweensOf(banner);
+      gsap.set(banner, { clearProps: "opacity,clipPath" });
+      banner.style.pointerEvents = "";
+    });
+
+    setPinStackOrder(section, 0);
+  }
+
+  function setup() {
+    if (mobileMq.matches) {
+      applyMobileStatic();
+    } else {
+      setupDesktop();
+    }
+    hasSetupOnce = true;
+  }
+
+  setup();
+
+  mobileMq.addEventListener("change", () => {
+    if (cleanupIfDetached()) return;
+    setup();
+    ScrollTrigger.refresh();
+  });
 
   return trigger;
 }

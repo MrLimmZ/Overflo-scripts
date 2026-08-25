@@ -3,64 +3,77 @@
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
 
 export function initCtaParallax(root = document) {
-  const cta = root.querySelector(".cta-section--content");
-  const layers = root.querySelectorAll(".cta-image-layer");
-  if (!cta || !layers.length) return;
+  const ctaSections = Array.from(root.querySelectorAll(".cta-section--content"));
+  if (!ctaSections.length) return;
 
-  const parallaxLayers = Array.from(layers).filter(
-    (layer) => layer.dataset.speed !== undefined,
-  );
+  const setups = [];
 
-  const tweens = [];
+  ctaSections.forEach((cta) => {
+    if (cta.dataset.parallax === "false") return;
+    const layers = Array.from(cta.querySelectorAll(".cta-image-layer"));
+    if (!layers.length) return;
 
-  function applyStaticState() {
-    tweens.forEach((tween) => tween.scrollTrigger?.kill());
-    tweens.forEach((tween) => tween.kill());
-    tweens.length = 0;
-    gsap.set(parallaxLayers, { yPercent: 0, scale: 1 });
-  }
+    const parallaxLayers = layers.filter(
+      (layer) => layer.dataset.speed !== undefined,
+    );
 
-  function createParallax() {
-    parallaxLayers.forEach((layer) => {
-      const speed = parseFloat(layer.dataset.speed) || 0.5;
+    const tweens = [];
 
-      const tween = gsap.fromTo(
-        layer,
-        { yPercent: 0, scale: 1 },
-        {
-          yPercent: 40 * speed,
-          scale: 1.05,
-          ease: "none",
-          scrollTrigger: {
-            trigger: cta,
-            start: "top bottom",
-            end: "bottom top",
-            scrub: 0.3,
+    function applyStaticState() {
+      tweens.forEach((tween) => tween.scrollTrigger?.kill());
+      tweens.forEach((tween) => tween.kill());
+      tweens.length = 0;
+      gsap.set(parallaxLayers, { yPercent: 0, scale: 1 });
+    }
+
+    function createParallax() {
+      parallaxLayers.forEach((layer) => {
+        const speed = parseFloat(layer.dataset.speed) || 0.5;
+
+        const tween = gsap.fromTo(
+          layer,
+          { yPercent: 0, scale: 1 },
+          {
+            yPercent: 40 * speed,
+            scale: 1.05,
+            ease: "none",
+            scrollTrigger: {
+              trigger: cta,
+              start: "top bottom",
+              end: "bottom top",
+              scrub: 0.3,
+            },
           },
-        },
-      );
-      tweens.push(tween);
-    });
-  }
+        );
+        tweens.push(tween);
+      });
+    }
 
-  layers.forEach((layer) => {
-    gsap.set(layer, {
-      width: "115%",
-      height: "115%",
-      maxWidth: "none",
-      left: "-7.5%",
-      top: "-7.5%",
+    layers.forEach((layer) => {
+      gsap.set(layer, {
+        width: "115%",
+        height: "115%",
+        maxWidth: "none",
+        left: "-7.5%",
+        top: "-7.5%",
+      });
     });
+
+    function setup(reduced) {
+      if (reduced) {
+        applyStaticState();
+      } else {
+        createParallax();
+      }
+    }
+
+    setup(prefersReducedMotion());
+    setups.push(setup);
   });
 
-  function setup(reduced) {
-    if (reduced) {
-      applyStaticState();
-    } else {
-      createParallax();
-    }
+  if (setups.length) {
+    onMotionPreferenceChange((reduced) => {
+      setups.forEach((setup) => setup(reduced));
+    });
   }
-
-  setup(prefersReducedMotion());
-  onMotionPreferenceChange(setup);
 }

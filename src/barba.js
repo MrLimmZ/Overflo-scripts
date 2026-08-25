@@ -22,6 +22,10 @@ import { initProductHeaderReveal } from "./product-header-reveal.js";
 import { initReinsuranceReveal } from "./reinsurance-reveal.js";
 import { initTrioReveal } from "./trio-reveal.js";
 import { initBentoReveal } from "./bento-reveal.js";
+import { initBlogCardsReveal } from "./blog-cards-reveal.js";
+import { initHelpCardsReveal } from "./help-cards-reveal.js";
+import { initCollapseReveal } from "./collapse-reveal.js";
+import { initStoryReveal } from "./story-reveal.js";
 import { initWhyCardsConverge } from "./why-cards-converge.js";
 import { initHowHorizontalScroll } from "./how-horizontal-scroll.js";
 import { initWhatStepsCrossfade } from "./what-steps-crossfade.js";
@@ -97,6 +101,10 @@ function reinitModules(root) {
   initReinsuranceReveal(root);
   initTrioReveal(root);
   initBentoReveal(root);
+  initBlogCardsReveal(root);
+  initHelpCardsReveal(root);
+  initCollapseReveal(root);
+  initStoryReveal(root);
   runSchema(root);
 
   const pinTriggers = [

@@ -5,8 +5,7 @@ import { initFadeUpReveal } from "./utils/scroll-reveal.js";
 export function initTrioReveal(root = document) {
   initFadeUpReveal(root, {
     sectionSelector: ".trio",
-    itemSelector: ".trio-item",
+    itemSelector: ".reinsurance-card",
     initFlag: "trioRevealInit",
-    start: "top top",
   });
 }
