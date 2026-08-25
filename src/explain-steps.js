@@ -1,4 +1,4 @@
-// src/heading-steps.js
+// src/explain-steps.js
 
 import { reportWipeProgress } from "./utils/shape-follow.js";
 import { isScrollLocked, acquireScrollLock, releaseScrollLock } from "./utils/scroll-lock.js";
@@ -6,14 +6,14 @@ import { isScrollLocked, acquireScrollLock, releaseScrollLock } from "./utils/sc
 const OWNER_ID = "explain-steps";
 const SLIDE_DURATION = 0.7;
 const SLIDE_EASE = "power3.inOut";
-const MASK_DURATION = 1.8;
-const STEP_MASK_DURATION = 0.9;
+const MASK_DURATION = 1.1;
+const STEP_MASK_DURATION = 0.6;
 const MASK_EASE = "power3.inOut";
 const WIPE_RADIUS = 24;
 const UNSTOP_DELAY = 0.05;
 const GESTURE_GAP_MS = 120;
 const QUEUED_SCROLL_THRESHOLD = 15;
-const RETURN_FADE_LEAD = 0.56;
+const RETURN_FADE_LEAD = 0;
 
 function lenisStop() {
   acquireScrollLock(OWNER_ID);
@@ -182,6 +182,8 @@ export function initExplainSteps(root = document) {
   let queuedDelta = 0;
   let lastWheelTime = 0;
   let gestureBroken = false;
+  let pinReenteredAt = 0;
+  const REENTRY_COOLDOWN_MS = 250; // laisse l'inertie du geste qui vient de faire (ré)entrer dans le pin se dissiper
 
   const controller = new AbortController();
   const { signal } = controller;
@@ -194,21 +196,48 @@ export function initExplainSteps(root = document) {
     return false;
   }
 
+  // Étape suivante/précédente possible depuis currentActiveIndex, dans la
+  // direction dir (+1 ou -1) ? Mêmes bornes que onKeyDown : l'entrée/sortie
+  // vers l'index virtuel (0) reste gérée par home-header.js, pas ici. On
+  // bloque aussi tout déclenchement direct pendant le cooldown suivant une
+  // (ré)entrée dans le pin (ex: remontée depuis bento) — sinon l'inertie du
+  // geste qui vient de faire re-rentrer dans le pin recule instantanément
+  // l'étape, avant même que l'utilisateur n'ait "atterri" dessus.
+  function canStepDirectly(dir) {
+    if (performance.now() - pinReenteredAt < REENTRY_COOLDOWN_MS) return false;
+    if (dir > 0) return currentActiveIndex >= 1 && currentActiveIndex < total - 1;
+    return currentActiveIndex > 1;
+  }
+
   function onWheel(e) {
     if (cleanupIfDetached()) return;
-    if (!locked) return;
+
+    if (locked) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const now = performance.now();
+      if (now - lastWheelTime > GESTURE_GAP_MS) {
+        gestureBroken = true;
+      }
+      lastWheelTime = now;
+      if (gestureBroken) {
+        queuedDelta += e.deltaY;
+      }
+      return;
+    }
+
+    // Pas verrouillé : on ne veut plus attendre que le scroll (lissé par
+    // Lenis) franchisse physiquement le seuil de la bande suivante — ça
+    // crée un délai perceptible entre le geste et le début de
+    // l'animation. On réagit directement au geste dès qu'il est assez
+    // franc, comme onKeyDown le fait déjà pour les flèches.
+    if (!trigger.isActive) return;
+    if (Math.abs(e.deltaY) < QUEUED_SCROLL_THRESHOLD) return;
+    const dir = Math.sign(e.deltaY);
+    if (!canStepDirectly(dir)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-
-    const now = performance.now();
-    if (now - lastWheelTime > GESTURE_GAP_MS) {
-      gestureBroken = true;
-    }
-    lastWheelTime = now;
-
-    if (gestureBroken) {
-      queuedDelta += e.deltaY;
-    }
+    stepToward(currentActiveIndex + dir);
   }
   let touchStartY = 0;
   function onTouchStart(e) {
@@ -217,17 +246,30 @@ export function initExplainSteps(root = document) {
   }
   function onTouchMove(e) {
     if (cleanupIfDetached()) return;
-    if (!locked) return;
+
+    if (locked) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const now = performance.now();
+      if (now - lastWheelTime > GESTURE_GAP_MS) gestureBroken = true;
+      lastWheelTime = now;
+      const currentY = e.touches[0]?.clientY ?? touchStartY;
+      if (gestureBroken) queuedDelta += touchStartY - currentY;
+      touchStartY = currentY;
+      return;
+    }
+
+    // Même logique de déclenchement direct que onWheel, pour le tactile.
+    if (!trigger.isActive) return;
+    const currentY = e.touches[0]?.clientY ?? touchStartY;
+    const deltaY = touchStartY - currentY;
+    if (Math.abs(deltaY) < QUEUED_SCROLL_THRESHOLD) return;
+    const dir = Math.sign(deltaY);
+    if (!canStepDirectly(dir)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-
-    const now = performance.now();
-    if (now - lastWheelTime > GESTURE_GAP_MS) gestureBroken = true;
-    lastWheelTime = now;
-
-    const currentY = e.touches[0]?.clientY ?? touchStartY;
-    if (gestureBroken) queuedDelta += touchStartY - currentY;
     touchStartY = currentY;
+    stepToward(currentActiveIndex + dir);
   }
   function onKeyDown(e) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
@@ -249,16 +291,12 @@ export function initExplainSteps(root = document) {
     }
 
     if (isScrollLocked(OWNER_ID)) return;
+    if (!trigger.isActive) return;
 
-    if (e.key === "ArrowDown") {
-      if (currentActiveIndex < 1 || currentActiveIndex >= total - 1) return;
-      e.preventDefault();
-      stepToward(currentActiveIndex + 1);
-    } else {
-      if (currentActiveIndex <= 1) return;
-      e.preventDefault();
-      stepToward(currentActiveIndex - 1);
-    }
+    const dir = e.key === "ArrowDown" ? 1 : -1;
+    if (!canStepDirectly(dir)) return;
+    e.preventDefault();
+    stepToward(currentActiveIndex + dir);
   }
   window.addEventListener("wheel", onWheel, { capture: true, passive: false, signal });
   window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true, signal });
@@ -336,6 +374,19 @@ export function initExplainSteps(root = document) {
         if (outgoingBanner) resetBannerNeutral(outgoingBanner);
         setStepStacking(nextIndex, -1);
 
+        // Informe home-header.js de l'étape réellement active — sans ça,
+        // il ne peut deviner l'état que via window.scrollY, qui coïncide
+        // par construction avec la position de repos de step1
+        // (bandCenter(1) === son propre seuil de sortie vers home), donc
+        // le moindre petit tic de molette juste après l'arrivée sur
+        // step1 était pris pour une intention de sortie vers home.
+        section.dispatchEvent(
+          new CustomEvent("explain-steps:step-changed", {
+            bubbles: true,
+            detail: { index: nextIndex },
+          })
+        );
+
         if (isInitialReveal) {
           section.dispatchEvent(
             new CustomEvent("explain-steps:entrance-revealed", { bubbles: true })
@@ -352,7 +403,13 @@ export function initExplainSteps(root = document) {
         }
 
         const queuedDir = Math.abs(queuedDelta) >= QUEUED_SCROLL_THRESHOLD ? Math.sign(queuedDelta) : 0;
-        const queuedTarget = Math.max(0, Math.min(total - 1, nextIndex + queuedDir));
+        // La queue ne doit jamais faire descendre automatiquement vers
+        // l'étape virtuelle (0 = home) — cette transition-là reste
+        // réservée au lien explicite avec home-header.js
+        // (home-header:enter-home), pas à un enchaînement générique de
+        // scroll résiduel après un gros geste.
+        const minQueuedTarget = nextIndex === 0 ? 0 : 1;
+        const queuedTarget = Math.max(minQueuedTarget, Math.min(total - 1, nextIndex + queuedDir));
 
         gsap.delayedCall(UNSTOP_DELAY, () => {
           if (!isReturnToVirtual) {
@@ -430,13 +487,16 @@ export function initExplainSteps(root = document) {
     pinType: "transform",
     pinSpacing: true,
     scrub: true,
+    anticipatePin: 1,
     invalidateOnRefresh: true,
     onRefresh: (self) => setPinStackOrder(section, self.isActive ? 1 : 0),
     onEnter: () => {
       setPinStackOrder(section, 1);
+      pinReenteredAt = performance.now();
     },
     onEnterBack: () => {
       setPinStackOrder(section, 1);
+      pinReenteredAt = performance.now();
     },
     onLeave: () => setPinStackOrder(section, 0),
     onLeaveBack: () => {
@@ -446,6 +506,10 @@ export function initExplainSteps(root = document) {
       }
     },
     onUpdate: (self) => {
+      // Filet de sécurité (scrollbar déplacée à la souris, scroll
+      // programmatique externe...) : le déclenchement normal passe
+      // maintenant par onWheel/onTouchMove/onKeyDown en direct, plus
+      // rapide que d'attendre ce onUpdate.
       if (activeTween) return;
       const targetIndex = computeIndexFromProgress(self.progress);
       if (targetIndex === currentActiveIndex) return;

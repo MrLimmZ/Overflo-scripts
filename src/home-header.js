@@ -115,6 +115,22 @@ export function initHomeHeaderSnap(root = document) {
   const controller = new AbortController();
   const { signal } = controller;
 
+  let explainActiveIndex = 0;
+  let explainStepSettledAt = 0;
+  const EXIT_WHEEL_THRESHOLD = 15; // même seuil que explain-steps.js, pour un geste jugé "volontaire"
+  const EXIT_COOLDOWN_MS = 250; // laisse l'inertie du geste précédent (qui vient d'amener sur step1) se dissiper
+
+  next?.addEventListener(
+    "explain-steps:step-changed",
+    (e) => {
+      explainActiveIndex = e.detail.index;
+      if (explainActiveIndex === 1) {
+        explainStepSettledAt = performance.now();
+      }
+    },
+    { signal }
+  );
+
   next?.addEventListener(
     "explain-steps:entrance-revealed",
     () => {
@@ -134,6 +150,13 @@ export function initHomeHeaderSnap(root = document) {
   let activeSide = window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE ? "home" : "next";
 
   function syncInitialShapeGeometry() {
+    // Check proactif : sans lui, une instance périmée ne se détache que
+    // lorsqu'un de SES PROPRES listeners wheel/touch/keydown se déclenche
+    // par hasard — ce qui peut prendre un moment (ou ne jamais arriver
+    // avant le prochain scroll). refreshInit se déclenche à chaque
+    // ScrollTrigger.refresh(), donc systématiquement en tout début de
+    // reinitModules() suivant : ça permet à l'instance périmée de
+    // s'auto-nettoyer dès la page suivante, sans attendre une interaction.
     if (cleanupIfDetached()) return;
     if (!shapeEl) return;
     initialShapeSize = computeInitialShapeSize();
@@ -170,14 +193,19 @@ export function initHomeHeaderSnap(root = document) {
     return window.scrollY <= BOUNDARY_TOLERANCE;
   }
 
-  function isAtHomeHeaderBottomBoundary() {
-    const explainTrigger = ScrollTrigger.getById("explain-steps");
-    if (explainTrigger) {
-      const bandStep = window.innerHeight * 0.8;
-      const band1Center = explainTrigger.start + bandStep * 1 + bandStep / 2;
-      return window.scrollY <= band1Center + BOUNDARY_TOLERANCE;
-    }
-    return window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE;
+  function isAtHomeHeaderBottomBoundary(deltaY = Infinity) {
+    // Trois conditions pour un vrai geste de sortie volontaire :
+    // - être précisément sur step1 (pas step2+, pas en transition)
+    // - le geste doit avoir une magnitude significative (pas un tic
+    //   résiduel infime)
+    // - un temps de "refroidissement" doit s'être écoulé depuis
+    //   l'atterrissage sur step1, pour laisser l'inertie du geste qui
+    //   vient d'amener ici (ex: un gros scroll arrière depuis step2)
+    //   se dissiper avant d'accepter une sortie
+    if (explainActiveIndex !== 1) return false;
+    if (Math.abs(deltaY) < EXIT_WHEEL_THRESHOLD) return false;
+    if (performance.now() - explainStepSettledAt < EXIT_COOLDOWN_MS) return false;
+    return true;
   }
 
   function clearWatchers() {
@@ -276,6 +304,10 @@ export function initHomeHeaderSnap(root = document) {
 
   setShapeFollower(applyShapeProgress);
   signal.addEventListener("abort", () => {
+    // clearShapeFollower (pas setShapeFollower(null)) : n'efface que si
+    // applyShapeProgress est ENCORE le follower actif. Si ce cleanup arrive
+    // en retard (après qu'une instance plus récente a déjà pris le relais),
+    // il ne doit RIEN faire — sinon il écrase le bon follower en place.
     clearShapeFollower(applyShapeProgress);
   });
 
@@ -337,7 +369,7 @@ export function initHomeHeaderSnap(root = document) {
     const returnFailsafe = 4000;
     failsafeTimeoutId = setTimeout(unlock, returnFailsafe);
 
-    let pending = 2;
+    let pending = 2; // [scroll/dépin réel, fade-in du contenu]
     function completeOne() {
       pending -= 1;
       if (pending <= 0) unlock();
@@ -393,7 +425,7 @@ export function initHomeHeaderSnap(root = document) {
     } else if (e.deltaY < 0) {
       if (isScrollLocked(OWNER_ID)) return;
       if (activeSide !== "next") return;
-      if (!isAtHomeHeaderBottomBoundary()) return;
+      if (!isAtHomeHeaderBottomBoundary(e.deltaY)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       scrollToTop();
@@ -432,7 +464,7 @@ export function initHomeHeaderSnap(root = document) {
     } else if (deltaY <= -TOUCH_SWIPE_THRESHOLD) {
       if (isScrollLocked(OWNER_ID)) return;
       if (activeSide !== "next") return;
-      if (!isAtHomeHeaderBottomBoundary()) return;
+      if (!isAtHomeHeaderBottomBoundary(deltaY)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       scrollToTop();
