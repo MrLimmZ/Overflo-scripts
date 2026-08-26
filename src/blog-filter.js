@@ -34,13 +34,7 @@ export function initBlogFilter(root = document) {
   const categorySelect = form.querySelector("[data-blog-category]");
   const listWrapper = root.querySelector("[data-blog-list]");
   const items = listWrapper ? listWrapper.querySelectorAll(".w-dyn-item") : [];
-  const emptyState = root.querySelector("[data-blog-empty]");
-
-  if (emptyState) {
-    emptyState.setAttribute("role", "status");
-    emptyState.setAttribute("aria-live", "polite");
-    emptyState.hidden = true;
-  }
+  const emptyState = root.querySelector("[data-filter-empty]");
 
   populateCategorySelect(root, categorySelect);
 
@@ -68,7 +62,7 @@ export function initBlogFilter(root = document) {
     return (str || "")
       .toLowerCase()
       .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, ""); 
+      .replace(/[\u0300-\u036f]/g, "");
   }
 
   function filter() {
@@ -97,8 +91,7 @@ export function initBlogFilter(root = document) {
     listWrapper.setAttribute("aria-hidden", hasResults ? "false" : "true");
 
     if (emptyState) {
-      emptyState.classList.toggle("is-visible", !hasResults);
-      emptyState.hidden = hasResults;
+      emptyState.style.display = hasResults ? "none" : "flex";
     }
 
     if (typeof ScrollTrigger !== "undefined") {

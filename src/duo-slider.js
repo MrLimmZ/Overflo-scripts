@@ -13,11 +13,16 @@ const THROW_DISTANCE = 600;
 const THROW_ROTATION = 14;
 const THROW_ROTATE_Y = 35;
 const THROW_LIFT = 90;
+const THROW_STAGGER = 0.18;
 
 // --- Réglages du drag (mobile uniquement) ----------------------------------
 const DRAG_COMMIT_THRESHOLD = 70;
 const DRAG_DIRECTION_LOCK = 10;
 const DRAG_ROTATION_FACTOR = 0.04;
+
+// --- Réglages du hover sur les cards en arrière-plan -----------------------
+const HOVER_SCALE_BOOST = 1.04;
+const HOVER_DURATION = 0.3;
 
 export function initDuoSlider(root = document) {
   const section = root.querySelector(".duo-slider");
@@ -50,6 +55,7 @@ export function initDuoSlider(root = document) {
   });
 
   const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+  const hasFinePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
   const cards = items.map((item) => ({
     item,
@@ -190,8 +196,15 @@ export function initDuoSlider(root = document) {
     };
   }
 
-  function render(animate = true, direction = 1, throwSide = 1) {
+  function currentForwardDist(index) {
+    const diff = circularDiff(index, activeIndex, total);
+    return diff < 0 ? total + diff : diff;
+  }
+
+  function render(animate = true, direction = 1, throwSide = 1, prevDistByIndex = null) {
     if (animate) isAnimating = true;
+
+    const targetPrevDist = prevDistByIndex ? prevDistByIndex[activeIndex] : null;
 
     let completed = 0;
 
@@ -210,19 +223,31 @@ export function initDuoSlider(root = document) {
     cards.forEach((entry) => {
       const { item, card } = entry;
       const index = items.indexOf(item);
-      const diff = circularDiff(index, activeIndex, total);
-      const forwardDist = diff < 0 ? total + diff : diff;
+      const forwardDist = currentForwardDist(index);
       const target = styleForDepth(forwardDist);
 
       const isActive = forwardDist === 0;
       const isVisible = forwardDist <= 2;
-      const isBeingThrown = direction >= 0 && entry.wasActive && !isActive;
+
+      const prevDist = prevDistByIndex ? prevDistByIndex[index] : null;
+      const isBeingThrown =
+        direction >= 0 &&
+        !isActive &&
+        prevDist !== null &&
+        targetPrevDist !== null &&
+        prevDist < targetPrevDist &&
+        prevDist <= 2;
       const isBecomingActive = direction < 0 && isActive && !entry.wasActive;
       entry.wasActive = isActive;
 
       item.classList.toggle("is-active", isActive);
       item.style.pointerEvents = isVisible ? "auto" : "none";
-      item.style.zIndex = isBeingThrown || isBecomingActive ? total + 1 : target.zIndex;
+      item.style.cursor = isActive || !isVisible ? "" : "pointer";
+      item.style.zIndex = isBeingThrown
+        ? total + 10 - prevDist
+        : isBecomingActive
+          ? total + 1
+          : target.zIndex;
 
       item.setAttribute("aria-hidden", isVisible ? "false" : "true");
       getFocusableChildren(item).forEach((el) => {
@@ -252,6 +277,8 @@ export function initDuoSlider(root = document) {
         const throwRotateY = THROW_ROTATE_Y * throwSide;
         lastThrowSide = throwSide;
 
+        const throwDelay = prevDist * THROW_STAGGER;
+
         gsap.to(item, {
           keyframes: {
             "60%": {
@@ -272,6 +299,7 @@ export function initDuoSlider(root = document) {
             },
           },
           duration: DURATION,
+          delay: throwDelay,
           overwrite: true,
           onComplete: () => {
             gsap.set(item, {
@@ -366,9 +394,10 @@ export function initDuoSlider(root = document) {
 
     const dirDiff = circularDiff(target, activeIndex, total);
     const direction = dirDiff === 0 ? 1 : Math.sign(dirDiff);
+    const prevDistByIndex = items.map((_, i) => currentForwardDist(i));
 
     activeIndex = target;
-    render(true, direction, throwSide);
+    render(true, direction, throwSide, prevDistByIndex);
   }
 
   prevBtn?.addEventListener("click", (e) => {
@@ -389,6 +418,41 @@ export function initDuoSlider(root = document) {
       e.preventDefault();
       goTo(activeIndex + 1);
     }
+  });
+
+  items.forEach((item, index) => {
+    item.addEventListener("click", () => {
+      if (currentForwardDist(index) === 0) return; // déjà active
+      goTo(index);
+    });
+
+    if (!hasFinePointer) return;
+
+    item.addEventListener("mouseenter", () => {
+      if (reduced) return;
+      const dist = currentForwardDist(index);
+      if (dist === 0 || dist > 2) return;
+      const baseScale = styleForDepth(dist).scale;
+      gsap.to(item, {
+        scale: baseScale * HOVER_SCALE_BOOST,
+        duration: HOVER_DURATION,
+        ease: "power2.out",
+        overwrite: "auto",
+      });
+    });
+
+    item.addEventListener("mouseleave", () => {
+      if (reduced) return;
+      const dist = currentForwardDist(index);
+      if (dist === 0 || dist > 2) return;
+      const baseScale = styleForDepth(dist).scale;
+      gsap.to(item, {
+        scale: baseScale,
+        duration: HOVER_DURATION,
+        ease: "power2.out",
+        overwrite: "auto",
+      });
+    });
   });
 
   let dragState = null;
@@ -484,7 +548,7 @@ export function initDuoSlider(root = document) {
   list.addEventListener("pointerdown", onPointerDown);
   window.addEventListener("pointermove", onPointerMove, { passive: false });
   window.addEventListener("pointerup", onPointerUp);
-  window.addEventListener("pointercancel", onPointerUp); 
+  window.addEventListener("pointercancel", onPointerUp);
   let resizeTimer;
   let lastWidth = window.innerWidth;
   window.addEventListener("resize", () => {

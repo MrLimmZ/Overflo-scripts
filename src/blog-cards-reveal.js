@@ -14,4 +14,10 @@ export function initBlogCardsReveal(root = document) {
     itemSelector: ".blog-card",
     initFlag: "blogListRevealInit",
   });
+
+  initFadeUpReveal(root, {
+    sectionSelector: ".latest-article-wrapper",
+    itemSelector: ".blog-card",
+    initFlag: "latestArticleRevealInit",
+  });
 }

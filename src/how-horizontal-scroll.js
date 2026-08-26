@@ -4,7 +4,7 @@ import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-p
 
 const MOBILE_BREAKPOINT = 767;
 
-const GAP_EXTRA_MAX = 40;
+const GAP_EXTRA_MAX = 30;
 const GAP_EXTRA_MIN = -18;
 const GAP_FLOOR_PX = 12;
 const GAP_SMOOTH_EASE = 0.18;
@@ -14,6 +14,12 @@ const VELOCITY_TO_GAP_DIVISOR = 14;
 const ENTRY_HOLD_RATIO = 0.08;
 const EXIT_HOLD_RATIO = 0.08;
 const SCRUB_SMOOTHING = 1.2;
+
+// Pendant que la section est pinnée, on réduit la réactivité du scroll
+// (via Lenis) pour plafonner la vitesse de défilement du slider, sans
+// désynchroniser le déverrouillage du pin de l'animation visuelle.
+const PINNED_WHEEL_MULTIPLIER = 0.35;
+const PINNED_TOUCH_MULTIPLIER = 0.35;
 
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -72,6 +78,32 @@ function createGapInertia(list) {
   return { start, stop, pushTarget, refreshBaseGap };
 }
 
+function createLenisSpeedClamp() {
+  let original = null;
+  let active = false;
+
+  function apply() {
+    if (active || !window.lenis?.options) return;
+    original = {
+      wheelMultiplier: window.lenis.options.wheelMultiplier,
+      touchMultiplier: window.lenis.options.touchMultiplier,
+    };
+    window.lenis.options.wheelMultiplier = PINNED_WHEEL_MULTIPLIER;
+    window.lenis.options.touchMultiplier = PINNED_TOUCH_MULTIPLIER;
+    active = true;
+  }
+
+  function restore() {
+    if (!active || !window.lenis?.options || !original) return;
+    window.lenis.options.wheelMultiplier = original.wheelMultiplier;
+    window.lenis.options.touchMultiplier = original.touchMultiplier;
+    active = false;
+    original = null;
+  }
+
+  return { apply, restore };
+}
+
 export function initHowHorizontalScroll(root = document) {
   if (typeof ScrollTrigger === "undefined") return;
 
@@ -85,6 +117,7 @@ export function initHowHorizontalScroll(root = document) {
   const list = track.querySelector(".how-list");
 
   const gapInertia = list ? createGapInertia(list) : null;
+  const lenisSpeedClamp = createLenisSpeedClamp();
   let listScrollHandler = null;
   let lastProgress = 0;
 
@@ -124,6 +157,7 @@ export function initHowHorizontalScroll(root = document) {
   }
 
   function applyStaticState() {
+    lenisSpeedClamp.restore();
     track.style.transform = "none";
     section.style.overflowX = "";
     section.removeAttribute("tabindex");
@@ -203,6 +237,10 @@ export function initHowHorizontalScroll(root = document) {
       scrub: SCRUB_SMOOTHING,
       anticipatePin: 1,
       invalidateOnRefresh: true,
+      onEnter: () => lenisSpeedClamp.apply(),
+      onEnterBack: () => lenisSpeedClamp.apply(),
+      onLeave: () => lenisSpeedClamp.restore(),
+      onLeaveBack: () => lenisSpeedClamp.restore(),
       onUpdate: (self) => {
         const eased = easeInOutCubic(remapToActiveZone(self.progress));
         const x = -cachedDistance * eased;
@@ -226,6 +264,7 @@ export function initHowHorizontalScroll(root = document) {
       st.kill();
       st = null;
     }
+    lenisSpeedClamp.restore();
     if (shouldUseStatic()) {
       applyStaticState();
     } else {

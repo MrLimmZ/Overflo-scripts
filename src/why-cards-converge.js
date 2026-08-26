@@ -11,12 +11,12 @@ const FADE_END = 0.85;
 const SHRINK_AMOUNT = 0.15;
 const DESKTOP_SHRINK_AMOUNT = 0.25;
 const SMOOTH_EASE = 0.12;
-const DESKTOP_SMOOTH_EASE = 0.06; // plus lent que mobile : limite l'inertie d'un gros coup de scroll
-const REVERSE_EASE_MIN = 0.05; // vitesse de "rattrapage" mini d'une carte au retour arrière
-const REVERSE_EASE_MAX = 0.18; // vitesse de rattrapage maxi -> écart = décalage entre cartes
-const AUTO_PLAY_AT = 0.7; // à partir de 70% de progression, l'animation termine toute seule
-const AUTO_PLAY_DURATION = 1.1; // secondes pour parcourir tout seul les 30% restants
-const AUTO_PLAY_CANCEL_MARGIN = 0.02; // hystérésis pour annuler l'autoplay si on scrolle en arrière
+const DESKTOP_SMOOTH_EASE = 0.06; 
+const REVERSE_EASE_MIN = 0.05;
+const REVERSE_EASE_MAX = 0.18;
+const AUTO_PLAY_AT = 0.7;
+const AUTO_PLAY_DURATION = 1.1;
+const AUTO_PLAY_CANCEL_MARGIN = 0.02;
 const ENTRY_HOLD_RATIO = 0.08;
 const EXIT_HOLD_RATIO = 0.08;
 const SCRUB_SMOOTHING = 1.2;
@@ -75,7 +75,6 @@ export function initWhyCardsConverge(root = document) {
 
   applyStarRatings(items);
 
-  // Icônes d'étoiles par carte, même sélecteur que le slider testimonials
   const starIcons = Array.from(items).map((item) =>
     Array.from(item.querySelectorAll(".stars-list > .icon-xs")),
   );
@@ -170,7 +169,6 @@ export function initWhyCardsConverge(root = document) {
       item.style.transform = `translate(-50%, -50%) scale(${scale}) translate(${x}px, ${y}px) rotate(${rotate}deg)`;
       item.style.opacity = "1";
 
-      // Étoiles cachées tant que la carte n'a pas convergé
       setStarsRevealed(index, false, true);
 
       return {
@@ -179,8 +177,8 @@ export function initWhyCardsConverge(root = document) {
         y,
         rotate,
         frozen: false,
-        displayProgress: 0, // progression locale à la carte (diffère du global au retour arrière)
-        reverseEase: randomBetween(REVERSE_EASE_MIN, REVERSE_EASE_MAX), // vitesse de rattrapage propre à chaque carte
+        displayProgress: 0,
+        reverseEase: randomBetween(REVERSE_EASE_MIN, REVERSE_EASE_MAX),
       };
     });
 
@@ -189,13 +187,8 @@ export function initWhyCardsConverge(root = document) {
         const reversing = targetProgress < card.displayProgress - 0.0001;
 
         if (reversing) {
-          // Retour arrière : chaque carte rattrape sa cible à sa propre
-          // vitesse (reverseEase), ce qui crée un décalage naturel entre
-          // les cartes au lieu d'un reset synchrone de toutes en même temps.
           card.displayProgress += (targetProgress - card.displayProgress) * card.reverseEase;
         } else {
-          // En avant : la progression globale est déjà lissée en amont
-          // (RAF + lerp), pas besoin d'ajouter un délai supplémentaire ici.
           card.displayProgress = targetProgress;
         }
 
@@ -207,8 +200,6 @@ export function initWhyCardsConverge(root = document) {
           1
         );
 
-        // Carte déjà totalement fade out : on ne bouge/calcule plus rien,
-        // on évite de continuer à parcourir une distance invisible jusqu'au centre.
         if (fadeProgress >= 1) {
           if (!card.frozen) {
             card.item.style.setProperty("opacity", "0", "important");
@@ -228,7 +219,6 @@ export function initWhyCardsConverge(root = document) {
           card.item.style.setProperty("opacity", `${1 - fadeProgress}`, "important");
         }
 
-        // Pop des étoiles une fois la carte quasi convergée, avant le fade out
         if (eased >= STAR_REVEAL_AT) {
           setStarsRevealed(index, true);
         } else if (eased < STAR_HIDE_AT) {
@@ -248,9 +238,6 @@ export function initWhyCardsConverge(root = document) {
       (baseDistance / (1 - ENTRY_HOLD_RATIO - EXIT_HOLD_RATIO)) *
       SCROLL_RESISTANCE;
 
-    // Progression affichée découplée du scroll brut : elle rattrape sa
-    // cible progressivement (RAF + lerp), donc un gros coup de scroll
-    // ne peut plus faire sauter l'animation d'un coup jusqu'au bout.
     let targetProgress = 0;
     let smoothProgress = 0;
     let rafId = null;
@@ -284,9 +271,6 @@ export function initWhyCardsConverge(root = document) {
 
     function tick() {
       if (autoTween) {
-        // Pendant l'autoplay, on laisse la tween piloter smoothProgress.
-        // Seule exception : si l'utilisateur scrolle franchement en arrière
-        // sous le seuil, on annule l'autoplay et on redonne la main au scroll.
         if (targetProgress < AUTO_PLAY_AT - AUTO_PLAY_CANCEL_MARGIN) {
           stopAutoPlay();
         }

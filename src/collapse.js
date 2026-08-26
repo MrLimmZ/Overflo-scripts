@@ -153,7 +153,6 @@ function initCollapse() {
     const openDuration = reduced ? 0 : 0.5;
     const ease = "power2.inOut";
 
-    // Ferme les autres items ouverts (comportement accordéon).
     document.querySelectorAll(".collapse-item.is-open").forEach((openItem) => {
       if (openItem === item) return;
       const other = ensureAccessibleMarkup(openItem);

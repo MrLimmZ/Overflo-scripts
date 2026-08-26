@@ -1,19 +1,4 @@
 // src/utils/star-rating.js
-//
-// Applique un remplissage partiel (0 à 5, ex: 4.7) sur des blocs d'étoiles
-// à 2 couches (.star-icon-base neutre + .star-icon-fill accent, découpé
-// via clip-path). Réutilisable par toute section qui reprend la même
-// structure stars-list / icon-xs (slider de témoignages, cartes "why", etc).
-//
-// Structure attendue par carte :
-//   <div data-rating="4.7">          <- ou un enfant portant data-rating
-//     <div class="stars-list">
-//       <div class="icon-xs">          (x5)
-//         <div class="star-icon-base">...</div>
-//         <div class="star-icon-fill">...</div>
-//       </div>
-//     </div>
-//   </div>
 
 const DEFAULT_OPTIONS = {
   starSelector: ".stars-list > .icon-xs",
@@ -29,12 +14,12 @@ function getCardRating(card, options) {
     (card.matches?.(options.ratingAttrSelector) ? card : null) ||
     card;
   const raw = parseFloat(ratingHost.dataset?.rating);
-  if (Number.isNaN(raw)) return options.maxStars; // fallback : pas de champ = notation pleine
+  if (Number.isNaN(raw)) return options.maxStars;
   return Math.min(options.maxStars, Math.max(0, raw));
 }
 
 /**
- * @param {Element[] | NodeListOf<Element>} cards - conteneurs, chacun avec sa propre stars-list
+ * @param {Element[] | NodeListOf<Element>} cards
  * @param {Partial<typeof DEFAULT_OPTIONS>} userOptions
  */
 export function applyStarRatings(cards, userOptions = {}) {

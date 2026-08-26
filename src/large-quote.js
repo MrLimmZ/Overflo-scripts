@@ -122,8 +122,6 @@ export function initLargeQuoteReveal(root = document) {
   }
 
   function createPinnedScrollAnimation() {
-    // Desktop : Lenis lisse déjà le scroll en amont, self.progress
-    // arrive déjà "smooth" — rien à ajouter ici.
     return ScrollTrigger.create({
       id: "large-quote-reveal",
       trigger: section,
@@ -140,12 +138,6 @@ export function initLargeQuoteReveal(root = document) {
   }
 
   function createUnpinnedScrollAnimation() {
-    // Mobile (pas de Lenis) : scrub seul n'a aucun effet ici puisque ce
-    // ScrollTrigger n'a pas d'animation GSAP attachée (juste un
-    // onUpdate) — self.progress reflète donc la position de scroll
-    // BRUTE, qui arrive par à-coups pendant un scroll lancé sur
-    // mobile. On lisse nous-mêmes : une boucle rAF qui rattrape
-    // progressivement la vraie valeur plutôt que de sauter dessus.
     let targetProgress = 0;
     let currentProgress = 0;
     let rafId = null;

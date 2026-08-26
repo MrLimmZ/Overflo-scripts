@@ -246,9 +246,28 @@ function attachPlayPauseButton(video, id, requested) {
   );
 }
 
-export function initDecorativeVideos(root = document) {
-  const images = Array.from(root.querySelectorAll("img[data-video-source]"));
+function registerExistingVideo(video) {
+  const id = video.dataset.controllerId;
+  if (!id || controllers.has(id)) return;
 
+  const delay = readNumberAttr(video, "videoDelay", 0);
+  const loopStart =
+    video.dataset.videoLoopStart !== undefined ? parseFloat(video.dataset.videoLoopStart) : null;
+  const loopEnd =
+    video.dataset.videoLoopEnd !== undefined ? parseFloat(video.dataset.videoLoopEnd) : null;
+  const replay = readBoolAttr(video, "videoReplay");
+
+  reloadAndPrime(video);
+
+  const controller = createController(video, { delay, loopStart, loopEnd, replay });
+  controllers.set(id, controller);
+  videosById.set(id, video);
+
+  const showControls = video.dataset.videoControls === "true";
+  attachPlayPauseButton(video, id, showControls);
+}
+
+export function initDecorativeVideos(root = document) {
   controllers.clear();
   videosById.clear();
 
@@ -256,6 +275,10 @@ export function initDecorativeVideos(root = document) {
   trackedButtons.clear();
   stopPositionSyncIfEmpty();
 
+  const existingVideos = Array.from(root.querySelectorAll("video[data-controller-id]"));
+  existingVideos.forEach((video) => registerExistingVideo(video));
+
+  const images = Array.from(root.querySelectorAll("img[data-video-source]"));
   if (!images.length) return;
   if (prefersReducedMotion()) return;
 
@@ -321,7 +344,7 @@ function swapToVideo(img, visibilityObserver) {
   const loopEnd = img.dataset.videoLoopEnd !== undefined ? parseFloat(img.dataset.videoLoopEnd) : null;
   const replay = readBoolAttr(img, "videoReplay");
   const showControls = img.dataset.videoControls === "true";
-  const id = img.dataset.videoId || `video-${++autoIdCounter}`;
+  const id = img.dataset.videoId || `video-auto-${++autoIdCounter}`;
 
   const video = document.createElement("video");
   video.poster = img.currentSrc || img.src;

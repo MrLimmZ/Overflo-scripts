@@ -193,14 +193,6 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   function isAtHomeHeaderBottomBoundary(deltaY = Infinity) {
-    // Trois conditions pour un vrai geste de sortie volontaire :
-    // - être précisément sur step1 (pas step2+, pas en transition)
-    // - le geste doit avoir une magnitude significative (pas un tic
-    //   résiduel infime)
-    // - un temps de "refroidissement" doit s'être écoulé depuis
-    //   l'atterrissage sur step1, pour laisser l'inertie du geste qui
-    //   vient d'amener ici (ex: un gros scroll arrière depuis step2)
-    //   se dissiper avant d'accepter une sortie
     if (explainActiveIndex !== 1) return false;
     if (Math.abs(deltaY) < EXIT_WHEEL_THRESHOLD) return false;
     if (performance.now() - explainStepSettledAt < EXIT_COOLDOWN_MS) return false;

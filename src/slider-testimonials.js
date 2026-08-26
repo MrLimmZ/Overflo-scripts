@@ -11,6 +11,9 @@ const DRAG_COMMIT_THRESHOLD = 60;
 const DRAG_DIRECTION_LOCK = 10;
 const CONTENT_HIDE_BUFFER = 16;
 const STAR_STAGGER = 0.06;
+const ADJACENT_SCALE = 0.85;
+const HOVER_SCALE_BOOST = 1.01; 
+const HOVER_DURATION = 0.3;
 
 export function initSliderTestimonials(root = document) {
   const section = root.querySelector(".slider");
@@ -56,8 +59,6 @@ export function initSliderTestimonials(root = document) {
       const contentRect = content.getBoundingClientRect();
       const cardRect = card.getBoundingClientRect();
 
-      // Distance pour que le HAUT du contenu dépasse le BAS de la carte,
-      // garantissant qu'il soit entièrement clippé par overflow:hidden.
       const distance = cardRect.bottom - contentRect.top + CONTENT_HIDE_BUFFER;
       return Math.max(distance, 0);
     });
@@ -159,7 +160,7 @@ export function initSliderTestimonials(root = document) {
       lastDistance.set(item, distance);
 
       const x = diff * spacing;
-      const scale = distance === 0 ? 1 : 0.85;
+      const scale = distance === 0 ? 1 : ADJACENT_SCALE;
       const opacity = distance === 0 ? 1 : distance === 1 ? 0.9 : 0;
       const rotateY = distance === 0 ? 0 : diff > 0 ? -14 : 14;
       const z = distance === 0 ? 0 : -60;
@@ -333,9 +334,37 @@ export function initSliderTestimonials(root = document) {
     goTo(activeIndex + 1);
   });
 
+  const hasFinePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
   items.forEach((item, index) => {
     item.addEventListener("click", () => {
       if (index !== activeIndex) goTo(index);
+    });
+
+    if (!hasFinePointer) return;
+
+    item.addEventListener("mouseenter", () => {
+      if (prefersReducedMotion()) return;
+      const diff = circularDiff(index, activeIndex);
+      if (Math.abs(diff) !== 1) return;
+      gsap.to(item, {
+        scale: ADJACENT_SCALE * HOVER_SCALE_BOOST,
+        duration: HOVER_DURATION,
+        ease: "power2.out",
+        overwrite: "auto",
+      });
+    });
+
+    item.addEventListener("mouseleave", () => {
+      if (prefersReducedMotion()) return;
+      const diff = circularDiff(index, activeIndex);
+      if (Math.abs(diff) !== 1) return;
+      gsap.to(item, {
+        scale: ADJACENT_SCALE,
+        duration: HOVER_DURATION,
+        ease: "power2.out",
+        overwrite: "auto",
+      });
     });
   });
 

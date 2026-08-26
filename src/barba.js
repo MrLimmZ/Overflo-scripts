@@ -26,6 +26,7 @@ import { initBlogCardsReveal } from "./blog-cards-reveal.js";
 import { initHelpCardsReveal } from "./help-cards-reveal.js";
 import { initCollapseReveal } from "./collapse-reveal.js";
 import { initStoryReveal } from "./story-reveal.js";
+import { initEmbeds } from "./embeds/index.js";
 import { initWhyCardsConverge } from "./why-cards-converge.js";
 import { initHowHorizontalScroll } from "./how-horizontal-scroll.js";
 import { initWhatStepsCrossfade } from "./what-steps-crossfade.js";
@@ -34,7 +35,10 @@ import { initDuoSlider } from "./duo-slider.js";
 import { initZoomReveal } from "./zoom-reveal.js";
 import { initExplainSteps } from "./explain-steps.js";
 import { initHomeHeaderSnap } from "./home-header.js";
+import { initHelpQuickAnswer } from "./help-quick-answer.js";
+import { initPricingStars } from "./pricing-stars-reveal.js";
 import { resetScrollLock } from "./utils/scroll-lock.js";
+import { initCustomSelects } from "./custom-select.js";
 import {
   initDecorativeVideos,
   initVideoControls,
@@ -90,6 +94,7 @@ function reinitModules(root) {
   initHeroParallax(root);
   initButtonHover(root);
   initBlogFilter(root);
+  initCustomSelects(root);
   initSocialShare(root);
   initLabelLinks(root);
   initArticleToc(root);
@@ -104,7 +109,10 @@ function reinitModules(root) {
   initBlogCardsReveal(root);
   initHelpCardsReveal(root);
   initCollapseReveal(root);
+  initPricingStars(root);
+  initHelpQuickAnswer(root);
   initStoryReveal(root);
+  initEmbeds(root);
   runSchema(root);
 
   const pinTriggers = [
