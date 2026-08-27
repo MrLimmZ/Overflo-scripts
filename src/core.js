@@ -9,7 +9,7 @@ function initLenis() {
   window.scrollTo(0, 0);
 
   if (typeof ScrollTrigger !== "undefined") {
-    ScrollTrigger.config({ autoRefreshEvents: "visibilitychange,DOMContentLoaded,load" });
+    ScrollTrigger.config({ autoRefreshEvents: "visibilitychange,DOMContentLoaded,load", ignoreMobileResize: true, });
   }
 
   const isMobile = window.matchMedia("(max-width: 767px)").matches;

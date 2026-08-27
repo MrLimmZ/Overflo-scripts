@@ -4,6 +4,8 @@ import { initNav } from "./nav.js";
 import { initNavTheme } from "./nav-theme.js";
 import { initCtaParallax } from "./cta-parallax.js";
 import { initHeroParallax } from "./hero-parallax.js";
+import { initFocusParallax } from "./focus-parallax.js";
+import { initShowcaseParallax } from "./showcase-parallax.js";
 import { initButtonHover } from "./button.js";
 import { initBlogFilter } from "./blog-filter.js";
 import { initSocialShare } from "./social-share.js";
@@ -92,6 +94,8 @@ function reinitModules(root) {
   initNavTheme(root);
   initCtaParallax(root);
   initHeroParallax(root);
+  initFocusParallax(root);
+  initShowcaseParallax(root);
   initButtonHover(root);
   initBlogFilter(root);
   initCustomSelects(root);

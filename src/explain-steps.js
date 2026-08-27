@@ -6,14 +6,17 @@ import { isScrollLocked, acquireScrollLock, releaseScrollLock } from "./utils/sc
 const OWNER_ID = "explain-steps";
 const SLIDE_DURATION = 0.7;
 const SLIDE_EASE = "power3.inOut";
-const MASK_DURATION = 1.1;
-const STEP_MASK_DURATION = 0.6;
-const MASK_EASE = "power3.inOut";
+const MASK_DURATION = 1.3;
+const STEP_MASK_DURATION = 0.75;
+const MASK_EASE = "sine.inOut";
 const WIPE_RADIUS = 24;
 const UNSTOP_DELAY = 0.05;
 const GESTURE_GAP_MS = 120;
 const QUEUED_SCROLL_THRESHOLD = 15;
 const RETURN_FADE_LEAD = 0;
+
+const MOBILE_REVEAL_DURATION = 1.1;
+const MOBILE_REVEAL_THRESHOLD = 0.15;
 
 function lenisStop() {
   acquireScrollLock(OWNER_ID);
@@ -53,6 +56,8 @@ function killWipeTween(banner) {
   if (banner) banner.classList.remove("is-wiping");
 }
 
+// `timeline` est désormais optionnel : si null, le tween joue seul
+// (utilisé pour la reveal mobile, indépendante de tout ScrollTrigger/pin).
 function tweenClipReveal(timeline, banner, dir, fromHidden, toHidden, duration, ease, position, coupledToShape = false) {
   if (!banner) return;
   killWipeTween(banner);
@@ -84,7 +89,7 @@ function tweenClipReveal(timeline, banner, dir, fromHidden, toHidden, duration, 
   });
 
   banner.__wipeTween = tween;
-  timeline.add(tween, position);
+  if (timeline) timeline.add(tween, position);
 }
 
 function setPinStackOrder(section, zIndexValue) {
@@ -124,6 +129,50 @@ export function initExplainSteps(root = document) {
       banner: step.querySelector(":scope > .explain-step-banner"),
     })),
   ];
+
+  // Banners déjà révélés une fois sur mobile : ne rejouent jamais l'ouverture,
+  // même si setup() est rappelé (ex: mobile -> desktop -> mobile).
+  const revealedBanners = new WeakSet();
+  let mobileRevealObserver = null;
+
+  function revealBannerMobile(banner) {
+    if (!banner || revealedBanners.has(banner)) return;
+    revealedBanners.add(banner);
+    tweenClipReveal(null, banner, 1, 100, 0, MOBILE_REVEAL_DURATION, MASK_EASE, 0, false);
+  }
+
+  function setupMobileReveal() {
+    if (mobileRevealObserver) {
+      mobileRevealObserver.disconnect();
+      mobileRevealObserver = null;
+    }
+
+    const pendingBanners = steps
+      .map(({ banner }) => banner)
+      .filter((banner) => banner && !revealedBanners.has(banner));
+
+    if (!pendingBanners.length) return;
+
+    mobileRevealObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          revealBannerMobile(entry.target);
+          mobileRevealObserver.unobserve(entry.target);
+        });
+      },
+      { threshold: MOBILE_REVEAL_THRESHOLD }
+    );
+
+    pendingBanners.forEach((banner) => mobileRevealObserver.observe(banner));
+  }
+
+  function teardownMobileReveal() {
+    if (mobileRevealObserver) {
+      mobileRevealObserver.disconnect();
+      mobileRevealObserver = null;
+    }
+  }
 
   function targetY(index, activeIndex) {
     return (index - activeIndex) * window.innerHeight;
@@ -193,6 +242,10 @@ export function initExplainSteps(root = document) {
 
   const controller = new AbortController();
   const { signal } = controller;
+
+  signal.addEventListener("abort", () => {
+    teardownMobileReveal();
+  });
 
   function cleanupIfDetached() {
     if (!document.body.contains(section)) {
@@ -522,6 +575,8 @@ export function initExplainSteps(root = document) {
   let hasSetupOnce = false;
 
   function setupDesktop() {
+    teardownMobileReveal();
+
     if (hasSetupOnce) {
       window.scrollTo(0, section.offsetTop);
       ScrollTrigger.update();
@@ -593,11 +648,21 @@ export function initExplainSteps(root = document) {
       if (!banner) return;
       killWipeTween(banner);
       gsap.killTweensOf(banner);
-      gsap.set(banner, { clearProps: "opacity,clipPath" });
+
+      if (revealedBanners.has(banner)) {
+        // Déjà révélé une fois précédemment (ex: mobile -> desktop -> mobile) :
+        // on le laisse simplement visible, pas de replay de l'ouverture.
+        gsap.set(banner, { clearProps: "opacity,clipPath" });
+      } else {
+        // État initial "fermé" (mask bas) en attendant l'entrée dans le
+        // viewport ; voir setupMobileReveal / revealBannerMobile.
+        gsap.set(banner, { opacity: 1, clipPath: clipHidden(1) });
+      }
       banner.style.pointerEvents = "";
     });
 
     setPinStackOrder(section, 0);
+    setupMobileReveal();
   }
 
   function setup() {

@@ -14,6 +14,16 @@
   }
 }
 
+.navbar-content--mobile.nav-light-mobile-menu {
+  .menu-item a {
+    color: #ffffff;
+  }
+
+  .button {
+    color: #ffffff;
+  }
+}
+
 .navbar-content--mobile {
   display: none;
 

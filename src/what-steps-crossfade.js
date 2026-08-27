@@ -39,6 +39,17 @@ export function initWhatStepsCrossfade(root = document) {
     reduced = value;
   });
 
+  function setBarHeight(bar, percent, instant = false) {
+    if (instant) {
+      bar.style.transition = "none";
+      bar.style.height = `${percent * 100}%`;
+      bar.offsetHeight; 
+      bar.style.transition = "";
+    } else {
+      bar.style.height = `${percent * 100}%`;
+    }
+  }
+
   function applyStaticState() {
     if (activeTimeline) {
       activeTimeline.kill();
@@ -53,7 +64,7 @@ export function initWhatStepsCrossfade(root = document) {
       group.style.display = index === total - 1 ? "block" : "none";
     });
     progressBars.forEach((bar) => {
-      bar.style.height = "100%";
+      setBarHeight(bar, 1, true);
     });
     currentActiveIndex = total - 1;
     queueTarget = total - 1;
@@ -138,7 +149,7 @@ export function initWhatStepsCrossfade(root = document) {
       } else if (index === targetIndex) {
         barProgress = localProgress;
       }
-      bar.style.height = `${barProgress * 100}%`;
+      setBarHeight(bar, barProgress, immediate);
     });
   }
 

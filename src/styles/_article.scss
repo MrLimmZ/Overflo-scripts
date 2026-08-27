@@ -5,6 +5,8 @@
 }
 
 .article-content-text {
+  min-width: 0;
+
   > figure img {
     border-radius: 16px;
     width: 100%;
@@ -34,6 +36,7 @@ blockquote {
 .rt-table-wrap {
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;

@@ -48,6 +48,11 @@ export function initNavTheme(root = document) {
     { el: nav.querySelector(".navbar-left"), className: "nav-light-logo", side: "left" },
     { el: nav.querySelector(".navbar-right .menu"), className: "nav-light-menu", side: "right" },
     { el: nav.querySelector(".navbar-right .button"), className: "nav-light-button", side: "right" },
+    // Panneau du menu mobile ouvert : c'est un overlay pleine largeur, pas
+    // une petite zone dans la barre du haut, donc "always" fait qu'il suit
+    // le thème actif dès qu'il est "light", sans dépendre d'un chevauchement
+    // horizontal avec une éventuelle image (voir recompute()).
+    { el: nav.querySelector("#mobile-menu"), className: "nav-light-mobile-menu", side: "always" },
   ].filter((zone) => zone.el);
 
   const sections = root.querySelectorAll("[data-nav-theme]");
@@ -68,16 +73,20 @@ export function initNavTheme(root = document) {
       return;
     }
 
-    if (!active.img) {
-      zones.forEach((zone) => {
+    const imgRect = active.img ? active.img.getBoundingClientRect() : null;
+
+    zones.forEach((zone) => {
+      if (zone.side === "always") {
+        zone.el.classList.add(zone.className);
+        return;
+      }
+
+      if (!imgRect) {
         const matchesSide = !active.side || active.side === "both" || active.side === zone.side;
         zone.el.classList.toggle(zone.className, matchesSide);
-      });
-      return;
-    }
+        return;
+      }
 
-    const imgRect = active.img.getBoundingClientRect();
-    zones.forEach((zone) => {
       const zoneRect = zone.el.getBoundingClientRect();
       zone.el.classList.toggle(zone.className, horizontallyOverlaps(zoneRect, imgRect));
     });

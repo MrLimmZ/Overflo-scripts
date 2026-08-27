@@ -26,41 +26,60 @@ function setupRow(row, containerWidth) {
   return row.scrollWidth / 2;
 }
 
+function waitForImages(row) {
+  const imgs = Array.from(row.querySelectorAll("img"));
+  const pending = imgs.filter((img) => !img.complete);
+  if (!pending.length) return Promise.resolve();
+
+  return Promise.all(
+    pending.map(
+      (img) =>
+        new Promise((resolve) => {
+          img.addEventListener("load", resolve, { once: true });
+          img.addEventListener("error", resolve, { once: true });
+        })
+    )
+  );
+}
+
 export function mountCarouselLoop(container) {
-  const list = container.querySelector(".bento-embed-3--list");
+  const list = container.classList.contains("bento-embed-3--list")
+    ? container
+    : container.querySelector(".bento-embed-3--list");
   if (!list) return;
 
   const rows = Array.from(list.querySelectorAll(":scope > .bento-embed-3--row"));
   if (!rows.length) return;
 
   const containerWidth = container.offsetWidth || list.offsetWidth || 600;
-
   const entries = [];
 
-  rows.forEach((row, index) => {
-    const loopWidth = setupRow(row, containerWidth);
-    if (!loopWidth) return;
+  function initRow(row, index) {
+    waitForImages(row).then(() => {
+      const loopWidth = setupRow(row, containerWidth);
+      if (!loopWidth) return;
 
-    gsap.set(row, { x: 0 });
+      gsap.set(row, { x: 0 });
 
-    if (prefersReducedMotion()) return;
+      if (prefersReducedMotion()) return;
 
-    const duration = loopWidth / SPEED_PX_PER_SECOND;
+      const duration = loopWidth / SPEED_PX_PER_SECOND;
 
-    const tl = gsap.timeline({ repeat: -1 }).to(row, {
-      x: -loopWidth,
-      duration,
-      ease: "none",
+      const tl = gsap.timeline({ repeat: -1 }).to(row, {
+        x: -loopWidth,
+        duration,
+        ease: "none",
+      });
+
+      if (index > 0) {
+        tl.progress((index * ROW_OFFSET_RATIO) % 1);
+      }
+
+      entries.push({ row, tl });
     });
+  }
 
-    if (index > 0) {
-      tl.progress((index * ROW_OFFSET_RATIO) % 1);
-    }
-
-    entries.push({ row, tl });
-  });
-
-  if (!entries.length) return;
+  rows.forEach((row, index) => initRow(row, index));
 
   if (typeof IntersectionObserver !== "undefined") {
     const observer = new IntersectionObserver(

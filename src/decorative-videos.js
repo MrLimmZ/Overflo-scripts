@@ -9,11 +9,28 @@ let autoIdCounter = 0;
 const trackedButtons = new Set();
 let tickerAttached = false;
 
+const MOBILE_BREAKPOINT = 767;
+const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+
+const PRELOAD_ROOT_MARGIN = "150% 0px 150% 0px";
+
+const warmedUrls = new Set();
+
 function readBoolAttr(el, ...names) {
   for (const name of names) {
     const value = el.dataset[name];
     if (value !== undefined) return value !== "false";
   }
+  return true;
+}
+
+function readBoolAttrResponsive(el, baseName, mobileName) {
+  if (mobileMq.matches) {
+    const mobileValue = el.dataset[mobileName];
+    if (mobileValue !== undefined) return mobileValue !== "false";
+  }
+  const value = el.dataset[baseName];
+  if (value !== undefined) return value !== "false";
   return true;
 }
 
@@ -30,6 +47,14 @@ function guessVideoType(url) {
   if (clean.endsWith(".webm")) return "video/webm";
   if (clean.endsWith(".mov") || clean.endsWith(".mp4")) return 'video/mp4; codecs="hvc1"';
   return null;
+}
+
+function warmVideoCache(url) {
+  if (!url || warmedUrls.has(url)) return;
+  warmedUrls.add(url);
+  fetch(url, { mode: "no-cors", credentials: "omit" }).catch(() => {
+    warmedUrls.delete(url); // permet de retenter si ça échoue (offline, etc.)
+  });
 }
 
 function primeFirstFrame(video) {
@@ -57,6 +82,14 @@ function reloadAndPrime(video) {
 function createController(video, config) {
   let delayTimer = null;
   let isLooping = false;
+  let pendingReadyPlay = null;
+
+  function clearPendingReadyPlay() {
+    if (pendingReadyPlay) {
+      video.removeEventListener("canplay", pendingReadyPlay);
+      pendingReadyPlay = null;
+    }
+  }
 
   function clearDelay() {
     if (delayTimer) {
@@ -91,6 +124,16 @@ function createController(video, config) {
           isLooping = false;
           video.currentTime = 0;
         }
+
+        if (video.readyState < 3) {
+          clearPendingReadyPlay();
+          pendingReadyPlay = () => {
+            pendingReadyPlay = null;
+            video.play().catch(() => {});
+          };
+          video.addEventListener("canplay", pendingReadyPlay, { once: true });
+        }
+
         video.play().catch(() => {});
       };
       if (config.delay > 0) {
@@ -101,12 +144,14 @@ function createController(video, config) {
     },
     reset() {
       clearDelay();
+      clearPendingReadyPlay();
       isLooping = false;
       video.pause();
       reloadAndPrime(video);
     },
     close() {
       clearDelay();
+      clearPendingReadyPlay();
       video.pause();
     },
     play() {
@@ -114,6 +159,7 @@ function createController(video, config) {
     },
     pause() {
       clearDelay();
+      clearPendingReadyPlay();
       video.pause();
     },
     toggle() {
@@ -255,7 +301,7 @@ function registerExistingVideo(video) {
     video.dataset.videoLoopStart !== undefined ? parseFloat(video.dataset.videoLoopStart) : null;
   const loopEnd =
     video.dataset.videoLoopEnd !== undefined ? parseFloat(video.dataset.videoLoopEnd) : null;
-  const replay = readBoolAttr(video, "videoReplay");
+  const replay = readBoolAttrResponsive(video, "videoReplay", "videoReplayMobile");
 
   reloadAndPrime(video);
 
@@ -336,13 +382,13 @@ function swapToVideo(img, visibilityObserver) {
   const hevcSrc = img.dataset.videoSourceHevc || null;
 
   const trigger = img.dataset.videoTrigger === "manual" ? "manual" : "visible";
-  const autoplay = readBoolAttr(img, "videoAutoplay");
+  const autoplay = readBoolAttrResponsive(img, "videoAutoplay", "videoAutoplayMobile");
   const nativeLoop = readBoolAttr(img, "videoLoop", "videoInfinite");
   const lazy = readBoolAttr(img, "videoLazy");
   const delay = readNumberAttr(img, "videoDelay", 0);
   const loopStart = img.dataset.videoLoopStart !== undefined ? parseFloat(img.dataset.videoLoopStart) : null;
   const loopEnd = img.dataset.videoLoopEnd !== undefined ? parseFloat(img.dataset.videoLoopEnd) : null;
-  const replay = readBoolAttr(img, "videoReplay");
+  const replay = readBoolAttrResponsive(img, "videoReplay", "videoReplayMobile");
   const showControls = img.dataset.videoControls === "true";
   const id = img.dataset.videoId || `video-auto-${++autoIdCounter}`;
 
@@ -386,6 +432,19 @@ function swapToVideo(img, visibilityObserver) {
 
   if (trigger === "visible") {
     visibilityObserver.observe(video);
+    const preloadObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          warmVideoCache(hevcSrc || webmSrc);
+          warmVideoCache(webmSrc);
+          preloadObserver.disconnect();
+        });
+      },
+      { rootMargin: PRELOAD_ROOT_MARGIN }
+    );
+    preloadObserver.observe(video);
+
     if (autoplay) {
       video.addEventListener(
         "canplay",

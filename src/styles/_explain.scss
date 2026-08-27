@@ -1,15 +1,16 @@
-  .explain-step-banner video {
-    border-radius: var(--_spacing---space-6);
-  }
+.explain-step-banner video {
+  border-radius: var(--_spacing---space-6);
+}
 
 .video-play-pause-wrapper {
-  z-index: 9999;
+  z-index: 50;
   pointer-events: none;
+  display: none;
 }
 
 .video-play-pause {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -56,12 +57,6 @@
   }
 }
 
-/* Mobile : les steps ne sont plus pinnées/empilées en absolute (voir
-   explain-steps.js), elles redeviennent un flux normal, potentiellement
-   bien plus haut qu'un seul viewport. Il faut donc que .explain puisse
-   grandir librement, et que .explain--content arrête de couper ce qui
-   dépasse — sinon tout le contenu au-delà du premier écran reste
-   invisible malgré le fix JS. Même seuil que MOBILE_BREAKPOINT en JS. */
 @media screen and (min-width: 767px) {
   .explain {
     position: relative;
@@ -79,5 +74,9 @@
   .explain-step-banner video {
     width: 100%;
     border-radius: none;
+  }
+
+  .video-play-pause-wrapper {
+    display: block;
   }
 }

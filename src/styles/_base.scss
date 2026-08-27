@@ -57,6 +57,12 @@ img {
   max-width: 300px;
 }
 
+@media screen and (max-width: 767px) {
+  .custom-select {
+    max-width: none;
+  }
+}
+
 .custom-select-button {
   width: 100%;
   height: 38px;
@@ -118,4 +124,9 @@ img {
       outline: none;
     }
   }
+}
+
+.what-step-progress-bar--during {
+  transition: height 150ms linear;
+  will-change: height;
 }
