@@ -6,7 +6,7 @@ import { isScrollLocked, acquireScrollLock, releaseScrollLock } from "./utils/sc
 const OWNER_ID = "explain-steps";
 const SLIDE_DURATION = 0.7;
 const SLIDE_EASE = "power3.inOut";
-const MASK_DURATION = 1.3;
+const MASK_DURATION = 0.6;
 const STEP_MASK_DURATION = 0.75;
 const MASK_EASE = "sine.inOut";
 const WIPE_RADIUS = 24;
@@ -134,11 +134,64 @@ export function initExplainSteps(root = document) {
   // même si setup() est rappelé (ex: mobile -> desktop -> mobile).
   const revealedBanners = new WeakSet();
   let mobileRevealObserver = null;
+  let mobileRevealTimerId = null;
 
   function revealBannerMobile(banner) {
     if (!banner || revealedBanners.has(banner)) return;
     revealedBanners.add(banner);
     tweenClipReveal(null, banner, 1, 100, 0, MOBILE_REVEAL_DURATION, MASK_EASE, 0, false);
+  }
+
+  function isStepAlreadyVisible(step) {
+    const rect = step.getBoundingClientRect();
+    const innerHeight = window.innerHeight || document.documentElement.clientHeight;
+    const visibleTop = Math.max(rect.top, 0);
+    const visibleBottom = Math.min(rect.bottom, innerHeight);
+    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+    const ratio = rect.height > 0 ? visibleHeight / rect.height : 0;
+    return ratio >= MOBILE_REVEAL_THRESHOLD;
+  }
+
+  // ScrollTrigger.refresh() peut être appelé par plusieurs modules sur le
+  // même resize (home-header.js fait de même) et bufferise/déporte en
+  // interne son recalcul réel — un simple requestAnimationFrame n'est pas
+  // fiable pour garantir que le layout est settled. On écoute donc
+  // l'événement "refresh" (déclenché seulement une fois le recalcul
+  // terminé pour de vrai) avant de mesurer/observer les steps. Filet de
+  // sécurité : si rien ne déclenche jamais ce refresh (cas limite), on
+  // retombe sur setupMobileReveal après un court délai.
+  function scheduleMobileRevealSetup() {
+    if (mobileRevealTimerId) {
+      clearTimeout(mobileRevealTimerId);
+      mobileRevealTimerId = null;
+    }
+
+    let done = false;
+    function run() {
+      if (done) return;
+      done = true;
+      if (typeof ScrollTrigger !== "undefined") {
+        ScrollTrigger.removeEventListener("refresh", onRefresh);
+      }
+      if (mobileRevealTimerId) {
+        clearTimeout(mobileRevealTimerId);
+        mobileRevealTimerId = null;
+      }
+      if (!mobileMq.matches) return;
+      if (!document.body.contains(section)) return;
+      setupMobileReveal();
+    }
+
+    function onRefresh() {
+      run();
+    }
+
+    if (typeof ScrollTrigger !== "undefined") {
+      ScrollTrigger.addEventListener("refresh", onRefresh);
+    }
+    // Filet de sécurité (ex: aucun refresh() déclenché derrière, ou
+    // ScrollTrigger indisponible).
+    mobileRevealTimerId = setTimeout(run, 400);
   }
 
   function setupMobileReveal() {
@@ -147,27 +200,62 @@ export function initExplainSteps(root = document) {
       mobileRevealObserver = null;
     }
 
-    const pendingBanners = steps
-      .map(({ banner }) => banner)
-      .filter((banner) => banner && !revealedBanners.has(banner));
+    // On observe le STEP parent, pas la banner elle-même : la banner porte
+    // notre propre clip-path "fermé" (inset(100% ...), 0% de surface
+    // visible), et l'IntersectionObserver calcule l'intersection sur la
+    // zone réellement visible après clip-path plutôt que sur la boîte de
+    // layout brute — un élément qu'on clippe nous-mêmes à 0% ne peut alors
+    // jamais reporter isIntersecting:true, peu importe sa position réelle
+    // à l'écran. Le step parent n'a lui aucun clip-path, donc son
+    // intersection reflète fidèlement le scroll.
+    const pendingPairs = steps.filter(
+      ({ banner }) => banner && !revealedBanners.has(banner)
+    );
 
-    if (!pendingBanners.length) return;
+    if (!pendingPairs.length) return;
+
+    // Passage desktop -> mobile alors qu'on est déjà scrollé plus bas dans
+    // la page (cas courant : on explore en desktop, puis on rétrécit la
+    // fenêtre) : une ou plusieurs steps peuvent déjà être visibles à
+    // l'instant du switch. On ne compte pas uniquement sur le premier
+    // batch de l'IntersectionObserver (qui peut être capturé pendant un
+    // état de layout encore instable juste après le kill du pin desktop) —
+    // on vérifie et révèle immédiatement ce qui est déjà dans le viewport.
+    const stillPending = [];
+    pendingPairs.forEach(({ step, banner }) => {
+      if (isStepAlreadyVisible(step)) {
+        revealBannerMobile(banner);
+      } else {
+        stillPending.push({ step, banner });
+      }
+    });
+
+    if (!stillPending.length) return;
+
+    const stepToBanner = new Map(stillPending.map(({ step, banner }) => [step, banner]));
 
     mobileRevealObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (!entry.isIntersecting) return;
-          revealBannerMobile(entry.target);
+          const banner = stepToBanner.get(entry.target);
+          if (!banner) return;
+          revealBannerMobile(banner);
           mobileRevealObserver.unobserve(entry.target);
+          stepToBanner.delete(entry.target);
         });
       },
       { threshold: MOBILE_REVEAL_THRESHOLD }
     );
 
-    pendingBanners.forEach((banner) => mobileRevealObserver.observe(banner));
+    stillPending.forEach(({ step }) => mobileRevealObserver.observe(step));
   }
 
   function teardownMobileReveal() {
+    if (mobileRevealTimerId) {
+      clearTimeout(mobileRevealTimerId);
+      mobileRevealTimerId = null;
+    }
     if (mobileRevealObserver) {
       mobileRevealObserver.disconnect();
       mobileRevealObserver = null;
@@ -220,6 +308,19 @@ export function initExplainSteps(root = document) {
     currentActiveIndex = activeIndex;
   }
 
+  // Repositionne juste les step/banner déjà en place (translateY) sur la
+  // nouvelle hauteur de viewport, sans toucher aux états de banner
+  // (opacity/clipPath/stacking) — contrairement à setStepsImmediate, qui
+  // remettrait tout à plat. Utilisé au resize (voir syncOnRefresh), quand
+  // on ne veut pas interrompre visuellement l'état courant.
+  function repositionStepsForViewport() {
+    steps.forEach(({ step, banner }, index) => {
+      const y = targetY(index, currentActiveIndex);
+      gsap.set(step, { y });
+      if (banner) gsap.set(banner, { y: -y });
+    });
+  }
+
   section.addEventListener("home-header:enter-next", () => {
     if (currentActiveIndex !== 0) setStepsImmediate(0);
     stepToward(1);
@@ -253,6 +354,33 @@ export function initExplainSteps(root = document) {
       return true;
     }
     return false;
+  }
+
+  // Même idiome que home-header.js : on se branche sur l'événement global
+  // "refreshInit" de ScrollTrigger (déclenché avant chaque refresh, lui-même
+  // déjà provoqué sur tout resize par le ResizeObserver de core.js), au
+  // lieu d'un listener resize séparé. bandStep est recalculé AVANT que
+  // ScrollTrigger ne réévalue le "end" du pin (qui dépend de bandStep),
+  // donc la distance de pin reste synchronisée avec la vraie hauteur de
+  // viewport après un resize — plus de désynchronisation.
+  function syncOnRefresh() {
+    if (cleanupIfDetached()) return;
+    if (mobileMq.matches) return;
+    if (!trigger) return;
+
+    bandStep = window.innerHeight * 0.8;
+
+    // On ne retouche pas la position pendant une transition en cours :
+    // elle se resynchronisera d'elle-même au prochain stepToward().
+    if (activeTween) return;
+    repositionStepsForViewport();
+  }
+
+  if (typeof ScrollTrigger !== "undefined") {
+    ScrollTrigger.addEventListener("refreshInit", syncOnRefresh);
+    signal.addEventListener("abort", () => {
+      ScrollTrigger.removeEventListener("refreshInit", syncOnRefresh);
+    });
   }
 
   function canStepDirectly(dir) {
@@ -662,7 +790,7 @@ export function initExplainSteps(root = document) {
     });
 
     setPinStackOrder(section, 0);
-    setupMobileReveal();
+    scheduleMobileRevealSetup();
   }
 
   function setup() {

@@ -1,6 +1,10 @@
 // src/why-cards-converge.js
 
-import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
+import {
+  prefersReducedMotion,
+  onMotionPreferenceChange,
+} from "./utils/motion-preference.js";
+import { onViewportResize } from "./utils/viewport-resize.js";
 import { applyStarRatings } from "./utils/star-rating.js";
 
 const MOBILE_BREAKPOINT = 767;
@@ -17,6 +21,7 @@ const EDGE_MARGIN = 16;
 const CARD_GAP = 24;
 
 const MAX_PLACEMENT_ATTEMPTS = 60;
+const MAX_RESOLVE_ITERATIONS = 40;
 
 const ENTRY_DURATION = 1;
 const ENTRY_STAGGER = 0.08;
@@ -30,13 +35,17 @@ const STAR_DELAY_AFTER_CARD = 0.25;
 // pour répartir les cartes "coin par coin" plutôt qu'au hasard partout.
 const QUADRANTS = [
   { sx: -1, sy: -1 }, // haut-gauche
-  { sx: 1, sy: -1 },  // haut-droite
-  { sx: -1, sy: 1 },  // bas-gauche
-  { sx: 1, sy: 1 },   // bas-droite
+  { sx: 1, sy: -1 }, // haut-droite
+  { sx: -1, sy: 1 }, // bas-gauche
+  { sx: 1, sy: 1 }, // bas-droite
 ];
 
 function randomBetween(min, max) {
   return min + Math.random() * (max - min);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function shuffle(array) {
@@ -89,8 +98,7 @@ function rotatedHalfExtents(halfW, halfH, rotateDeg) {
 
 function rectsOverlap(ax, ay, aHalfW, aHalfH, bx, by, bHalfW, bHalfH) {
   return (
-    Math.abs(ax - bx) < aHalfW + bHalfW &&
-    Math.abs(ay - by) < aHalfH + bHalfH
+    Math.abs(ax - bx) < aHalfW + bHalfW && Math.abs(ay - by) < aHalfH + bHalfH
   );
 }
 
@@ -106,7 +114,71 @@ function totalOverlap(x, y, halfW, halfH, placed) {
   return sum;
 }
 
-function computeCardTargets(section, header, items, scale, rotations) {
+// Passe de résolution déterministe : une fois la meilleure position issue
+// du tirage aléatoire trouvée (qui peut encore chevaucher si les 60
+// tentatives n'ont rien trouvé de libre), on pousse la carte hors de la
+// zone d'exclusion du header puis hors de chaque carte déjà placée, en la
+// reclampant dans son quadrant à chaque itération. Ça élimine les
+// chevauchements résiduels au lieu de se contenter du "moins pire" tiré
+// au hasard.
+function resolveOverlaps({
+  x,
+  y,
+  cardHalfW,
+  cardHalfH,
+  gapHalfW,
+  gapHalfH,
+  placed,
+  exclusion,
+  xRange,
+  yRange,
+}) {
+  for (let iter = 0; iter < MAX_RESOLVE_ITERATIONS; iter++) {
+    let moved = false;
+
+    if (exclusion) {
+      const overlapX = cardHalfW + exclusion.halfW - Math.abs(x - exclusion.x);
+      const overlapY = cardHalfH + exclusion.halfH - Math.abs(y - exclusion.y);
+      if (overlapX > 0 && overlapY > 0) {
+        moved = true;
+        if (overlapX < overlapY) {
+          x += x >= exclusion.x ? overlapX : -overlapX;
+        } else {
+          y += y >= exclusion.y ? overlapY : -overlapY;
+        }
+      }
+    }
+
+    for (const p of placed) {
+      const overlapX = gapHalfW + p.halfW - Math.abs(x - p.x);
+      const overlapY = gapHalfH + p.halfH - Math.abs(y - p.y);
+      if (overlapX > 0 && overlapY > 0) {
+        moved = true;
+        if (overlapX < overlapY) {
+          x += x >= p.x ? overlapX : -overlapX;
+        } else {
+          y += y >= p.y ? overlapY : -overlapY;
+        }
+      }
+    }
+
+    x = clamp(x, xRange[0], xRange[1]);
+    y = clamp(y, yRange[0], yRange[1]);
+
+    if (!moved) break;
+  }
+
+  return { x, y };
+}
+
+function computeCardTargets(
+  section,
+  header,
+  items,
+  scale,
+  rotations,
+  quadrantsOverride,
+) {
   const sectionRect = section.getBoundingClientRect();
   const centerX = sectionRect.left + sectionRect.width / 2;
   const centerY = sectionRect.top + sectionRect.height / 2;
@@ -124,7 +196,11 @@ function computeCardTargets(section, header, items, scale, rotations) {
     };
   }
 
-  const quadrants = assignQuadrants(items.length);
+  // Au premier calcul (entrée ou état statique), on tire de nouveaux
+  // quadrants. Au resize, on réutilise ceux déjà assignés (passés par
+  // repositionCards) pour ne pas rebattre l'identité des cartes — seule la
+  // position doit s'adapter à la nouvelle taille de section.
+  const quadrants = quadrantsOverride || assignQuadrants(items.length);
   const placed = [];
   const targets = [];
 
@@ -162,10 +238,19 @@ function computeCardTargets(section, header, items, scale, rotations) {
 
       const overlapsHeader =
         exclusion &&
-        rectsOverlap(x, y, cardHalfW, cardHalfH, exclusion.x, exclusion.y, exclusion.halfW, exclusion.halfH);
+        rectsOverlap(
+          x,
+          y,
+          cardHalfW,
+          cardHalfH,
+          exclusion.x,
+          exclusion.y,
+          exclusion.halfW,
+          exclusion.halfH,
+        );
 
       const overlapsCard = placed.some((p) =>
-        rectsOverlap(x, y, gapHalfW, gapHalfH, p.x, p.y, p.halfW, p.halfH)
+        rectsOverlap(x, y, gapHalfW, gapHalfH, p.x, p.y, p.halfW, p.halfH),
       );
 
       if (!overlapsHeader && !overlapsCard) {
@@ -188,6 +273,23 @@ function computeCardTargets(section, header, items, scale, rotations) {
     if (!found && bestOverlap === Infinity) {
       bestX = randomBetween(xRange[0], xRange[1]);
       bestY = randomBetween(yRange[0], yRange[1]);
+    }
+
+    if (!found) {
+      const resolved = resolveOverlaps({
+        x: bestX,
+        y: bestY,
+        cardHalfW,
+        cardHalfH,
+        gapHalfW,
+        gapHalfH,
+        placed,
+        exclusion,
+        xRange,
+        yRange,
+      });
+      bestX = resolved.x;
+      bestY = resolved.y;
     }
 
     placed.push({ x: bestX, y: bestY, halfW: gapHalfW, halfH: gapHalfH });
@@ -220,6 +322,12 @@ export function initWhyCardsConverge(root = document) {
   let st = null;
   let arrivalTimeline = null;
   let hasPlayed = false;
+  let currentScale = DESKTOP_SCALE;
+  // Rotations + quadrants décidés une fois (à l'entrée ou en statique) —
+  // réutilisés par repositionCards() pour que le resize ne rebatte pas les
+  // cartes, seulement leurs positions.
+  let lastRotations = null;
+  let lastQuadrants = null;
 
   function setStarsRevealed(index, revealed, instant = false) {
     const stars = starIcons[index];
@@ -247,20 +355,31 @@ export function initWhyCardsConverge(root = document) {
 
   function hideCardsInitial() {
     items.forEach((item, index) => {
-      item.style.transform = "translate(-50%, -50%) scale(0.2) translate(0px, 0px) rotate(0deg)";
+      item.style.transform =
+        "translate(-50%, -50%) scale(0.2) translate(0px, 0px) rotate(0deg)";
       item.style.setProperty("opacity", "0", "important");
       setStarsRevealed(index, false, true);
     });
   }
 
   function applyStaticState(scale) {
+    currentScale = scale;
     const rotations = pickDispersedRotations(items.length, FINAL_ROTATE_RANGE);
-    const targets = computeCardTargets(section, header, items, scale, rotations);
+    const quadrants = assignQuadrants(items.length);
+    lastRotations = rotations;
+    lastQuadrants = quadrants;
+    const targets = computeCardTargets(
+      section,
+      header,
+      items,
+      scale,
+      rotations,
+      quadrants,
+    );
 
     items.forEach((item, index) => {
       const target = targets[index];
-      item.style.transform =
-        `translate(-50%, -50%) scale(${scale}) translate(${target.x}px, ${target.y}px) rotate(${target.rotate}deg)`;
+      item.style.transform = `translate(-50%, -50%) scale(${scale}) translate(${target.x}px, ${target.y}px) rotate(${target.rotate}deg)`;
       item.style.setProperty("opacity", "1", "important");
       setStarsRevealed(index, true, true);
     });
@@ -269,11 +388,22 @@ export function initWhyCardsConverge(root = document) {
   function playArrival(scale) {
     if (hasPlayed) return;
     hasPlayed = true;
+    currentScale = scale;
 
     if (arrivalTimeline) arrivalTimeline.kill();
 
     const rotations = pickDispersedRotations(items.length, FINAL_ROTATE_RANGE);
-    const targets = computeCardTargets(section, header, items, scale, rotations);
+    const quadrants = assignQuadrants(items.length);
+    lastRotations = rotations;
+    lastQuadrants = quadrants;
+    const targets = computeCardTargets(
+      section,
+      header,
+      items,
+      scale,
+      rotations,
+      quadrants,
+    );
 
     const tl = gsap.timeline();
     arrivalTimeline = tl;
@@ -293,19 +423,39 @@ export function initWhyCardsConverge(root = document) {
           duration: ENTRY_DURATION,
           ease: ENTRY_EASE,
           onUpdate: () => {
-            item.style.transform =
-              `translate(-50%, -50%) scale(${proxy.scale}) translate(${proxy.x}px, ${proxy.y}px) rotate(${proxy.rotate}deg)`;
+            item.style.transform = `translate(-50%, -50%) scale(${proxy.scale}) translate(${proxy.x}px, ${proxy.y}px) rotate(${proxy.rotate}deg)`;
             item.style.setProperty("opacity", `${proxy.opacity}`, "important");
           },
         },
-        index * ENTRY_STAGGER
+        index * ENTRY_STAGGER,
       );
 
       tl.call(
         () => setStarsRevealed(index, true),
         [],
-        index * ENTRY_STAGGER + ENTRY_DURATION * STAR_DELAY_AFTER_CARD
+        index * ENTRY_STAGGER + ENTRY_DURATION * STAR_DELAY_AFTER_CARD,
       );
+    });
+  }
+
+  // Recalcule uniquement les positions (x/y) pour la taille de section
+  // actuelle, en gardant les rotations/quadrants déjà décidés — appelé au
+  // resize, tant que les cartes ont déjà été placées (entrée jouée ou
+  // état statique appliqué). Ne fait rien avant ça (cartes encore cachées).
+  function repositionCards() {
+    if (!lastRotations || !lastQuadrants) return;
+    if (arrivalTimeline) return; // on ne touche pas pendant l'animation d'entrée
+    const targets = computeCardTargets(
+      section,
+      header,
+      items,
+      currentScale,
+      lastRotations,
+      lastQuadrants,
+    );
+    items.forEach((item, index) => {
+      const target = targets[index];
+      item.style.transform = `translate(-50%, -50%) scale(${currentScale}) translate(${target.x}px, ${target.y}px) rotate(${target.rotate}deg)`;
     });
   }
 
@@ -344,6 +494,11 @@ export function initWhyCardsConverge(root = document) {
   mobileMq.addEventListener("change", () => {
     if (!document.body.contains(section)) return;
     setup();
+  });
+
+  onViewportResize(() => {
+    if (!document.body.contains(section)) return;
+    repositionCards();
   });
 
   return st;

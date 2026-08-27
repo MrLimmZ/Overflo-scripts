@@ -499,7 +499,16 @@ export function initHomeHeaderSnap(root = document) {
     releaseScrollLock(OWNER_ID);
 
     gsap.killTweensOf(contentEls);
+    // Sur mobile il n'y a pas de pin/snap : le contenu doit toujours être
+    // visible, quel que soit l'état desktop au moment du switch (fade-out
+    // en cours suite à scrollToBottom, ou pire, l'état CSS "avant JS" si
+    // playLoadEntrance n'a jamais tourné dans cette session, ce qui arrive
+    // en resize desktop -> mobile puisque playLoadEntrance ne se rejoue
+    // jamais). Un simple clearProps peut faire retomber sur ce dernier —
+    // on force donc explicitement l'état visible plutôt que de dépendre
+    // du CSS de base.
     gsap.set(contentEls, { clearProps: "all" });
+    gsap.set(contentEls, { opacity: 1, y: 0 });
 
     if (shapeEl) {
       gsap.killTweensOf(shapeEl);

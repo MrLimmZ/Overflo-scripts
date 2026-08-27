@@ -15,6 +15,21 @@ const ENTRY_HOLD_RATIO = 0.08;
 const EXIT_HOLD_RATIO = 0.08;
 const SCRUB_SMOOTHING = 1.2;
 
+// Le track ne doit jamais glisser plus vite que ça (px/s), même si l'utilisateur
+// fait un gros saut de scroll d'un coup (molette rapide, fling trackpad).
+const MAX_TRACK_SPEED_PX_PER_SEC = 1600;
+// Taux de rattrapage "amorti" quand l'écart est petit, indépendant du framerate.
+const TRACK_FOLLOW_RATE = 10;
+// Écart (px) en dessous duquel on considère le track "rattrapé" — sert à
+// savoir quand relâcher le scroll qu'on a gelé le temps du rattrapage.
+const CATCHUP_EPSILON_PX = 1;
+
+// Passe à false pour couper les logs de debug du gel/relâche de scroll.
+const DEBUG_HOLD = true;
+function debugLog(...args) {
+  if (DEBUG_HOLD) console.log("[how-horizontal-scroll]", ...args);
+}
+
 // Pendant que la section est pinnée, on réduit la réactivité du scroll
 // (via Lenis) pour plafonner la vitesse de défilement du slider, sans
 // désynchroniser le déverrouillage du pin de l'animation visuelle.
@@ -75,7 +90,15 @@ function createGapInertia(list) {
     targetExtra = clamp(rawExtraPx, GAP_EXTRA_MIN, GAP_EXTRA_MAX);
   }
 
-  return { start, stop, pushTarget, refreshBaseGap };
+  function measureAtBaseGap(fn) {
+    const previousGap = list.style.gap;
+    list.style.gap = `${baseGapPx}px`;
+    const result = fn();
+    list.style.gap = previousGap;
+    return result;
+  }
+
+  return { start, stop, pushTarget, refreshBaseGap, measureAtBaseGap };
 }
 
 function createLenisSpeedClamp() {
@@ -104,6 +127,113 @@ function createLenisSpeedClamp() {
   return { apply, restore };
 }
 
+function createTrackFollower(track) {
+  let currentX = 0;
+  let targetX = 0;
+  let rafId = null;
+  let lastTime = null;
+  let holding = false;
+
+  function isCaughtUp() {
+    return Math.abs(targetX - currentX) <= CATCHUP_EPSILON_PX;
+  }
+
+  function forceRelease() {
+    if (holding) {
+      debugLog("release scroll (caught up or safety release)", {
+        currentX,
+        targetX,
+        hasLenis: !!window.lenis,
+        hasStart: typeof window.lenis?.start === "function",
+      });
+    }
+    holding = false;
+    window.lenis?.start?.();
+  }
+
+  function tick(now) {
+    if (lastTime === null) lastTime = now;
+    // Garde-fou contre un gros dt (onglet mis en arrière-plan puis restauré).
+    const dt = Math.min((now - lastTime) / 1000, 0.1);
+    lastTime = now;
+
+    const delta = targetX - currentX;
+    const maxStep = MAX_TRACK_SPEED_PX_PER_SEC * dt;
+    // Rattrapage amorti dans le temps, mais jamais plus vite que
+    // MAX_TRACK_SPEED_PX_PER_SEC — absorbe les gros sauts de scroll sans
+    // que le slider ne "saute" visuellement à la position cible.
+    const easedStep = delta * Math.min(1, TRACK_FOLLOW_RATE * dt);
+    const step = clamp(easedStep, -maxStep, maxStep);
+
+    currentX += step;
+    track.style.transform = `translateX(${currentX}px)`;
+
+    // Le scroll réel a été gelé pendant qu'on rattrapait la cible (voir
+    // holdUntilCaughtUp) : dès qu'on l'a rejointe, on relâche pour laisser
+    // le pin se terminer normalement, en phase avec le visuel.
+    if (holding && isCaughtUp()) {
+      forceRelease();
+    }
+
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function start() {
+    if (rafId) return;
+    lastTime = null;
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function stop() {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    lastTime = null;
+    forceRelease();
+  }
+
+  function setTarget(x) {
+    targetX = x;
+  }
+
+  function jumpTo(x) {
+    currentX = x;
+    targetX = x;
+    track.style.transform = `translateX(${x}px)`;
+  }
+
+  // Appelé quand le scroll réel a atteint une borne du pin (début ou fin) :
+  // si le visuel n'a pas encore rattrapé sa cible, on gèle le scroll via
+  // Lenis pour empêcher le pin de se relâcher avant la fin de l'animation.
+  function holdUntilCaughtUp() {
+    if (holding || isCaughtUp()) return;
+    holding = true;
+    debugLog("HOLD scroll: track pas encore rattrapé à la borne du pin", {
+      currentX,
+      targetX,
+      gap: targetX - currentX,
+      hasLenis: !!window.lenis,
+      hasStop: typeof window.lenis?.stop === "function",
+    });
+    window.lenis?.stop?.();
+  }
+
+  return { start, stop, setTarget, jumpTo, holdUntilCaughtUp, forceRelease, isCaughtUp };
+}
+
+function resolveSpacingPageRight(contextEl) {
+  const probe = document.createElement("div");
+  probe.style.position = "absolute";
+  probe.style.visibility = "hidden";
+  probe.style.pointerEvents = "none";
+  probe.style.height = "0";
+  probe.style.width = "0";
+  probe.style.paddingRight = "var(--_spacing---space-page)";
+  contextEl.appendChild(probe);
+  const value = parseFloat(getComputedStyle(probe).paddingRight) || 0;
+  probe.remove();
+  return value;
+}
+
 export function initHowHorizontalScroll(root = document) {
   if (typeof ScrollTrigger === "undefined") return;
 
@@ -117,6 +247,7 @@ export function initHowHorizontalScroll(root = document) {
   const list = track.querySelector(".how-list");
 
   const gapInertia = list ? createGapInertia(list) : null;
+  const trackFollower = createTrackFollower(track);
   const lenisSpeedClamp = createLenisSpeedClamp();
   let listScrollHandler = null;
   let lastProgress = 0;
@@ -130,19 +261,31 @@ export function initHowHorizontalScroll(root = document) {
     const previousTransform = track.style.transform;
     track.style.transform = "none";
 
-    const sectionRect = section.getBoundingClientRect();
-    const sectionCenterX = sectionRect.left + sectionRect.width / 2;
+    const measure = () => {
+      const sectionRect = section.getBoundingClientRect();
+      const lastItem = list ? list.lastElementChild : null;
+      let value;
 
-    const lastItem = list ? list.lastElementChild : null;
-    let distance;
+      if (lastItem) {
+        // On aligne le bord droit du dernier item avec le bord droit de la
+        // zone de contenu du conteneur parent (qui porte
+        // padding: var(--_spacing---space-10) var(--_spacing---space-page)),
+        // pas avec le bord extérieur brut de la section (souvent full-bleed).
+        const paddingRight = resolveSpacingPageRight(section);
+        const itemRect = lastItem.getBoundingClientRect();
+        value = itemRect.right - (sectionRect.right - paddingRight);
+      } else {
+        value = track.scrollWidth - section.clientWidth;
+      }
 
-    if (lastItem) {
-      const itemRect = lastItem.getBoundingClientRect();
-      const itemCenterX = itemRect.left + itemRect.width / 2;
-      distance = itemCenterX - sectionCenterX;
-    } else {
-      distance = track.scrollWidth - section.clientWidth;
-    }
+      return value;
+    };
+
+    // Le gap fluctue en continu à cause de l'inertie (gapInertia). On
+    // mesure toujours avec le gap de base pour que la distance calculée
+    // corresponde à l'état "au repos" vers lequel le gap retombe en fin
+    // d'animation, sinon la position finale du dernier item est décalée.
+    const distance = gapInertia ? gapInertia.measureAtBaseGap(measure) : measure();
 
     track.style.transform = previousTransform;
 
@@ -158,6 +301,7 @@ export function initHowHorizontalScroll(root = document) {
 
   function applyStaticState() {
     lenisSpeedClamp.restore();
+    trackFollower.stop();
     track.style.transform = "none";
     section.style.overflowX = "";
     section.removeAttribute("tabindex");
@@ -167,6 +311,7 @@ export function initHowHorizontalScroll(root = document) {
     if (!list) return;
     list.style.overflowX = "auto";
     list.style.webkitOverflowScrolling = "touch";
+    list.style.width = "";
     list.setAttribute("tabindex", "0");
     list.setAttribute("role", "region");
     list.setAttribute("aria-label", "How Overflo works, scrollable steps");
@@ -205,6 +350,7 @@ export function initHowHorizontalScroll(root = document) {
     if (list) {
       list.style.overflowX = "";
       list.style.webkitOverflowScrolling = "";
+      list.style.width = "auto";
       list.removeAttribute("tabindex");
       list.removeAttribute("role");
       list.removeAttribute("aria-label");
@@ -216,6 +362,15 @@ export function initHowHorizontalScroll(root = document) {
       gapInertia.start();
       lastProgress = 0;
     }
+
+    trackFollower.jumpTo(0);
+    trackFollower.start();
+
+    debugLog("createScrollAnimation — état Lenis à l'init", {
+      hasLenis: !!window.lenis,
+      hasStop: typeof window.lenis?.stop === "function",
+      hasStart: typeof window.lenis?.start === "function",
+    });
 
     cachedDistance = computeScrollDistance();
     let totalPinDistance =
@@ -237,14 +392,46 @@ export function initHowHorizontalScroll(root = document) {
       scrub: SCRUB_SMOOTHING,
       anticipatePin: 1,
       invalidateOnRefresh: true,
-      onEnter: () => lenisSpeedClamp.apply(),
-      onEnterBack: () => lenisSpeedClamp.apply(),
-      onLeave: () => lenisSpeedClamp.restore(),
-      onLeaveBack: () => lenisSpeedClamp.restore(),
+      onEnter: () => {
+        debugLog("onEnter — pin activé");
+        lenisSpeedClamp.apply();
+      },
+      onEnterBack: () => {
+        debugLog("onEnterBack — pin activé (retour)");
+        lenisSpeedClamp.apply();
+      },
+      onLeave: () => {
+        debugLog("onLeave — pin relâché (fin)", {
+          trackCaughtUp: trackFollower.isCaughtUp(),
+        });
+        lenisSpeedClamp.restore();
+        trackFollower.forceRelease();
+      },
+      onLeaveBack: () => {
+        debugLog("onLeaveBack — pin relâché (début, retour arrière)", {
+          trackCaughtUp: trackFollower.isCaughtUp(),
+        });
+        lenisSpeedClamp.restore();
+        trackFollower.forceRelease();
+      },
       onUpdate: (self) => {
         const eased = easeInOutCubic(remapToActiveZone(self.progress));
         const x = -cachedDistance * eased;
-        track.style.transform = `translateX(${x}px)`;
+        trackFollower.setTarget(x);
+
+        // Si le scroll réel a déjà atteint une borne du pin mais que le
+        // visuel n'a pas fini de rattraper sa cible (à cause du plafond de
+        // vitesse), on gèle le scroll le temps que ça rattrape, pour que
+        // le dépin ne se produise jamais avant la fin visuelle du slide.
+        const atBoundary = self.progress >= 1 - 1e-4 || self.progress <= 1e-4;
+        if (atBoundary) {
+          debugLog("atBoundary check", {
+            progress: self.progress,
+            direction: self.direction,
+            caughtUp: trackFollower.isCaughtUp(),
+          });
+          trackFollower.holdUntilCaughtUp();
+        }
 
         if (gapInertia) {
           const deltaProgress = eased - lastProgress;
@@ -265,6 +452,7 @@ export function initHowHorizontalScroll(root = document) {
       st = null;
     }
     lenisSpeedClamp.restore();
+    trackFollower.forceRelease();
     if (shouldUseStatic()) {
       applyStaticState();
     } else {
