@@ -130,3 +130,19 @@ img {
   transition: height 150ms linear;
   will-change: height;
 }
+
+slider-dot,
+  .duo-slider-dot {
+    position: relative;
+  }
+
+  .slider-dot::before,
+  .duo-slider-dot::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 24px;
+    height: 24px;
+    transform: translate(-50%, -50%);
+  }

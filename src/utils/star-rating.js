@@ -48,6 +48,7 @@ export function applyStarRatings(cards, userOptions = {}) {
         "aria-label",
         `Rating: ${formatted} out of ${options.maxStars} stars`,
       );
+      starsList.setAttribute("role", "img");
     }
   });
 }
