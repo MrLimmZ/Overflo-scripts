@@ -16,6 +16,11 @@ const PRELOAD_ROOT_MARGIN = "150% 0px 150% 0px";
 
 const warmedUrls = new Set();
 
+const engagedIds = new Set();
+
+const primedSrcTimestamps = new Map();
+const DUPLICATE_SRC_STAGGER = 400; // ms
+
 function readBoolAttr(el, ...names) {
   for (const name of names) {
     const value = el.dataset[name];
@@ -53,7 +58,7 @@ function warmVideoCache(url) {
   if (!url || warmedUrls.has(url)) return;
   warmedUrls.add(url);
   fetch(url, { mode: "no-cors", credentials: "omit" }).catch(() => {
-    warmedUrls.delete(url); // permet de retenter si ça échoue (offline, etc.)
+    warmedUrls.delete(url);
   });
 }
 
@@ -79,8 +84,34 @@ function reloadAndPrime(video) {
   primeFirstFrame(video);
 }
 
-function createController(video, config) {
+function collectVideoSrc(video) {
+  const source = video.querySelector("source");
+  return source?.src || video.currentSrc || video.src || null;
+}
+
+function scheduledPrime(video) {
+  const src = collectVideoSrc(video);
+  if (!src) {
+    reloadAndPrime(video);
+    return;
+  }
+
+  const lastTime = primedSrcTimestamps.get(src) || 0;
+  const now = Date.now();
+  const wait = Math.max(0, lastTime + DUPLICATE_SRC_STAGGER - now);
+
+  primedSrcTimestamps.set(src, now + wait);
+
+  if (wait > 0) {
+    setTimeout(() => reloadAndPrime(video), wait);
+  } else {
+    reloadAndPrime(video);
+  }
+}
+
+function createController(video, config, id) {
   let delayTimer = null;
+  let loopDelayTimer = null;
   let isLooping = false;
   let pendingReadyPlay = null;
 
@@ -98,60 +129,123 @@ function createController(video, config) {
     }
   }
 
+  function clearLoopDelay() {
+    if (loopDelayTimer) {
+      clearTimeout(loopDelayTimer);
+      loopDelayTimer = null;
+    }
+  }
+
+  function restartSegment() {
+    video.currentTime = config.loopStart ?? 0;
+    video.play().catch(() => {});
+  }
+
+  function restartFull() {
+    video.currentTime = 0;
+    video.play().catch(() => {});
+  }
+
   function onTimeUpdate() {
     if (isLooping && config.loopEnd != null && video.currentTime >= config.loopEnd) {
-      video.currentTime = config.loopStart ?? 0;
+      if (config.loopDelay > 0) {
+        video.pause();
+        clearLoopDelay();
+        loopDelayTimer = setTimeout(() => {
+          loopDelayTimer = null;
+          restartSegment();
+        }, config.loopDelay);
+      } else {
+        restartSegment();
+      }
     }
   }
 
   function onEnded() {
     if (config.loopStart != null || config.loopEnd != null) {
       isLooping = true;
-      video.currentTime = config.loopStart ?? 0;
-      video.play().catch(() => {});
+      if (config.loopDelay > 0) {
+        clearLoopDelay();
+        loopDelayTimer = setTimeout(() => {
+          loopDelayTimer = null;
+          restartSegment();
+        }, config.loopDelay);
+      } else {
+        restartSegment();
+      }
+    } else if (config.loopDelay > 0) {
+      clearLoopDelay();
+      loopDelayTimer = setTimeout(() => {
+        loopDelayTimer = null;
+        restartFull();
+      }, config.loopDelay);
     }
   }
 
   video.addEventListener("timeupdate", onTimeUpdate);
   video.addEventListener("ended", onEnded);
 
+  // `forceRestart` : ignore l'état "ended"/replay et repart systématiquement
+  // de currentTime = 0. Utilisé par replay(), pour garantir un "relance à
+  // chaque fois" indépendant de la position où la vidéo en était restée
+  // (contrairement à trigger(), qui ne rembobine que si video.ended).
+  function doTrigger({ forceRestart = false } = {}) {
+    clearDelay();
+    clearLoopDelay();
+    engagedIds.add(id);
+
+    const start = () => {
+      if (forceRestart) {
+        isLooping = false;
+        video.currentTime = 0;
+      } else if (video.ended) {
+        if (!config.replay) return;
+        isLooping = false;
+        video.currentTime = 0;
+      }
+
+      if (video.readyState < 3) {
+        clearPendingReadyPlay();
+        pendingReadyPlay = () => {
+          pendingReadyPlay = null;
+          video.play().catch(() => {});
+        };
+        video.addEventListener("canplay", pendingReadyPlay, { once: true });
+      }
+
+      video.play().catch(() => {});
+    };
+
+    if (config.delay > 0) {
+      delayTimer = setTimeout(start, config.delay);
+    } else {
+      start();
+    }
+  }
+
   return {
     trigger() {
-      clearDelay();
-      const start = () => {
-        if (video.ended) {
-          if (!config.replay) return;
-          isLooping = false;
-          video.currentTime = 0;
-        }
-
-        if (video.readyState < 3) {
-          clearPendingReadyPlay();
-          pendingReadyPlay = () => {
-            pendingReadyPlay = null;
-            video.play().catch(() => {});
-          };
-          video.addEventListener("canplay", pendingReadyPlay, { once: true });
-        }
-
-        video.play().catch(() => {});
-      };
-      if (config.delay > 0) {
-        delayTimer = setTimeout(start, config.delay);
-      } else {
-        start();
-      }
+      doTrigger();
+    },
+    // Redémarre systématiquement depuis le début, peu importe l'état actuel
+    // (en cours de lecture, en pause à mi-parcours, ou terminée).
+    replay() {
+      doTrigger({ forceRestart: true });
     },
     reset() {
       clearDelay();
+      clearLoopDelay();
       clearPendingReadyPlay();
       isLooping = false;
+      engagedIds.delete(id);
       video.pause();
       reloadAndPrime(video);
     },
     close() {
       clearDelay();
+      clearLoopDelay();
       clearPendingReadyPlay();
+      engagedIds.delete(id);
       video.pause();
     },
     play() {
@@ -159,7 +253,9 @@ function createController(video, config) {
     },
     pause() {
       clearDelay();
+      clearLoopDelay();
       clearPendingReadyPlay();
+      engagedIds.delete(id);
       video.pause();
     },
     toggle() {
@@ -171,6 +267,19 @@ function createController(video, config) {
     },
     isPlaying() {
       return !video.paused && !video.ended;
+    },
+    suspend() {
+      clearDelay();
+      clearLoopDelay();
+      clearPendingReadyPlay();
+      video.pause();
+    },
+    resume() {
+      if (!engagedIds.has(id)) return;
+      isLooping = false;
+      video.pause();
+      video.currentTime = 0;
+      doTrigger();
     },
   };
 }
@@ -296,16 +405,24 @@ function registerExistingVideo(video) {
   const id = video.dataset.controllerId;
   if (!id || controllers.has(id)) return;
 
+  video.muted = true;
+  video.defaultMuted = true;
+
   const delay = readNumberAttr(video, "videoDelay", 0);
   const loopStart =
     video.dataset.videoLoopStart !== undefined ? parseFloat(video.dataset.videoLoopStart) : null;
   const loopEnd =
     video.dataset.videoLoopEnd !== undefined ? parseFloat(video.dataset.videoLoopEnd) : null;
+  const loopDelay = readNumberAttr(video, "videoLoopDelay", 0);
   const replay = readBoolAttrResponsive(video, "videoReplay", "videoReplayMobile");
 
-  reloadAndPrime(video);
+  if (loopDelay > 0) {
+    video.loop = false;
+  }
 
-  const controller = createController(video, { delay, loopStart, loopEnd, replay });
+  scheduledPrime(video);
+
+  const controller = createController(video, { delay, loopStart, loopEnd, loopDelay, replay }, id);
   controllers.set(id, controller);
   videosById.set(id, video);
 
@@ -313,13 +430,49 @@ function registerExistingVideo(video) {
   attachPlayPauseButton(video, id, showControls);
 }
 
+let visibilityHandlersAttached = false;
+
+function suspendAllEngaged() {
+  engagedIds.forEach((id) => {
+    controllers.get(id)?.suspend();
+  });
+}
+
+function resumeAllEngaged() {
+  Array.from(engagedIds).forEach((id) => {
+    controllers.get(id)?.resume();
+  });
+}
+
+function attachVisibilityHandlers() {
+  if (visibilityHandlersAttached) return;
+  visibilityHandlersAttached = true;
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      suspendAllEngaged();
+    } else {
+      resumeAllEngaged();
+    }
+  });
+
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted && !document.hidden) {
+      resumeAllEngaged();
+    }
+  });
+}
+
 export function initDecorativeVideos(root = document) {
   controllers.clear();
   videosById.clear();
+  engagedIds.clear();
 
   trackedButtons.forEach(({ wrapper }) => wrapper.remove());
   trackedButtons.clear();
   stopPositionSyncIfEmpty();
+
+  attachVisibilityHandlers();
 
   const existingVideos = Array.from(root.querySelectorAll("video[data-controller-id]"));
   existingVideos.forEach((video) => registerExistingVideo(video));
@@ -383,11 +536,12 @@ function swapToVideo(img, visibilityObserver) {
 
   const trigger = img.dataset.videoTrigger === "manual" ? "manual" : "visible";
   const autoplay = readBoolAttrResponsive(img, "videoAutoplay", "videoAutoplayMobile");
-  const nativeLoop = readBoolAttr(img, "videoLoop", "videoInfinite");
+  const nativeLoopRequested = readBoolAttr(img, "videoLoop", "videoInfinite");
   const lazy = readBoolAttr(img, "videoLazy");
   const delay = readNumberAttr(img, "videoDelay", 0);
   const loopStart = img.dataset.videoLoopStart !== undefined ? parseFloat(img.dataset.videoLoopStart) : null;
   const loopEnd = img.dataset.videoLoopEnd !== undefined ? parseFloat(img.dataset.videoLoopEnd) : null;
+  const loopDelay = readNumberAttr(img, "videoLoopDelay", 0);
   const replay = readBoolAttrResponsive(img, "videoReplay", "videoReplayMobile");
   const showControls = img.dataset.videoControls === "true";
   const id = img.dataset.videoId || `video-auto-${++autoIdCounter}`;
@@ -395,13 +549,14 @@ function swapToVideo(img, visibilityObserver) {
   const video = document.createElement("video");
   video.poster = img.currentSrc || img.src;
   video.muted = true;
+  video.defaultMuted = true;
   video.playsInline = true;
   video.setAttribute("aria-hidden", "true");
   video.dataset.videoTrigger = trigger;
   video.dataset.videoLazy = String(lazy);
   video.dataset.controllerId = id;
 
-  video.loop = nativeLoop && loopStart == null && loopEnd == null;
+  video.loop = nativeLoopRequested && loopStart == null && loopEnd == null && loopDelay <= 0;
 
   video.className = img.className;
   video.style.cssText = img.style.cssText;
@@ -413,18 +568,20 @@ function swapToVideo(img, visibilityObserver) {
   attachVideoSources(video, { webmSrc, hevcSrc });
 
   video.preload = "auto";
-  reloadAndPrime(video);
 
   video.addEventListener("error", () => {
     controllers.delete(id);
     videosById.delete(id);
+    engagedIds.delete(id);
     if (trigger === "visible") visibilityObserver.unobserve(video);
     video.replaceWith(img);
   });
 
   img.replaceWith(video);
 
-  const controller = createController(video, { delay, loopStart, loopEnd, replay });
+  scheduledPrime(video);
+
+  const controller = createController(video, { delay, loopStart, loopEnd, loopDelay, replay }, id);
   controllers.set(id, controller);
   videosById.set(id, video);
 

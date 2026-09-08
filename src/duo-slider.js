@@ -6,7 +6,6 @@ const STEP_OFFSET = 8;
 const DEPTH_SCALE = [1, 0.9, 0.78];
 const DEPTH_BG = ["#ffffff", "#f4f4f4", "#ededed"];
 const DOT_SPACING = 14;
-const MOBILE_BREAKPOINT = 767;
 
 // --- Réglages de l'effet "carte jetée" ------------------------------------
 const THROW_DISTANCE = 600;
@@ -15,10 +14,11 @@ const THROW_ROTATE_Y = 35;
 const THROW_LIFT = 90;
 const THROW_STAGGER = 0.18;
 
-// --- Réglages du drag (mobile uniquement) ----------------------------------
+// --- Réglages du drag (mobile + desktop) ------------------------------------
 const DRAG_COMMIT_THRESHOLD = 70;
 const DRAG_DIRECTION_LOCK = 10;
 const DRAG_ROTATION_FACTOR = 0.04;
+const DRAG_SCALE_BOOST = 1.04;
 
 // --- Réglages du hover sur les cards en arrière-plan -----------------------
 const HOVER_SCALE_BOOST = 1.04;
@@ -54,7 +54,6 @@ export function initDuoSlider(root = document) {
     EASE = reduced ? "none" : "power3.inOut";
   });
 
-  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
   const hasFinePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
   const cards = items.map((item) => ({
@@ -242,7 +241,11 @@ export function initDuoSlider(root = document) {
 
       item.classList.toggle("is-active", isActive);
       item.style.pointerEvents = isVisible ? "auto" : "none";
-      item.style.cursor = isActive || !isVisible ? "" : "pointer";
+      item.style.cursor = isActive
+        ? (isDragEnabled() ? "grab" : "")
+        : !isVisible
+          ? ""
+          : "pointer";
       item.style.zIndex = isBeingThrown
         ? total + 10 - prevDist
         : isBecomingActive
@@ -420,8 +423,14 @@ export function initDuoSlider(root = document) {
     }
   });
 
+  let suppressNextClick = false;
+
   items.forEach((item, index) => {
     item.addEventListener("click", () => {
+      if (suppressNextClick) {
+        suppressNextClick = false;
+        return;
+      }
       if (currentForwardDist(index) === 0) return; // déjà active
       goTo(index);
     });
@@ -458,7 +467,7 @@ export function initDuoSlider(root = document) {
   let dragState = null;
 
   function isDragEnabled() {
-    return mobileMq.matches && !prefersReducedMotion();
+    return !prefersReducedMotion();
   }
 
   function onPointerDown(e) {
@@ -466,6 +475,18 @@ export function initDuoSlider(root = document) {
 
     const item = e.target.closest(".duo-slider-item.is-active");
     if (!item) return;
+
+    item.style.cursor = "grabbing";
+
+    // feedback immédiat dès la saisie
+    if (!reduced) {
+      gsap.to(item, {
+        scale: DRAG_SCALE_BOOST,
+        duration: 0.15,
+        ease: "power2.out",
+        overwrite: "auto",
+      });
+    }
 
     dragState = {
       pointerId: e.pointerId,
@@ -498,8 +519,8 @@ export function initDuoSlider(root = document) {
       if (Math.abs(dragState.deltaX) > DRAG_DIRECTION_LOCK) {
         dragState.locked = "x";
         dragState.item.setPointerCapture(dragState.pointerId);
-        gsap.killTweensOf(dragState.item);
         lockPageScroll();
+        document.body.style.userSelect = "none";
       } else if (Math.abs(dragState.deltaY) > DRAG_DIRECTION_LOCK) {
         dragState.locked = "y";
         dragState = null;
@@ -528,8 +549,26 @@ export function initDuoSlider(root = document) {
     const { item, deltaX, locked } = dragState;
     dragState = null;
 
-    if (locked === "x") unlockPageScroll();
-    if (locked !== "x") return;
+    item.style.cursor = isDragEnabled() ? "grab" : "";
+
+    if (locked === "x") {
+      unlockPageScroll();
+      document.body.style.userSelect = "";
+      suppressNextClick = true; // évite le click fantôme émis par le navigateur après le drag (souris)
+    }
+
+    if (locked !== "x") {
+      // relâché sans avoir dragué horizontalement (simple clic ou drag vertical) : on annule le scale
+      if (!reduced) {
+        gsap.to(item, {
+          scale: 1,
+          duration: 0.15,
+          ease: "power2.out",
+          overwrite: "auto",
+        });
+      }
+      return;
+    }
 
     if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD) {
       goTo(activeIndex + 1, { throwSide: Math.sign(deltaX) });
@@ -538,6 +577,7 @@ export function initDuoSlider(root = document) {
         x: 0,
         y: 0,
         rotate: 0,
+        scale: 1,
         xPercent: -50,
         duration: 0.3,
         ease: "power2.out",
@@ -549,6 +589,7 @@ export function initDuoSlider(root = document) {
   window.addEventListener("pointermove", onPointerMove, { passive: false });
   window.addEventListener("pointerup", onPointerUp);
   window.addEventListener("pointercancel", onPointerUp);
+
   let resizeTimer;
   let lastWidth = window.innerWidth;
   window.addEventListener("resize", () => {

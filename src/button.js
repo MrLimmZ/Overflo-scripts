@@ -7,7 +7,7 @@ export function initButtonHover(root = document) {
     reduced = value;
   });
 
-  root.querySelectorAll(".button").forEach((button) => {
+  root.querySelectorAll(".button, .social-button").forEach((button) => {
     if (button.getAttribute("data-hover") === "false") return;
 
     const circle = button.querySelector(".button-bg-circle");

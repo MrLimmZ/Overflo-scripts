@@ -6,9 +6,11 @@ import {
 } from "./utils/motion-preference.js";
 import { applyStarRatings } from "./utils/star-rating.js";
 
-const MOBILE_BREAKPOINT = 767;
 const DRAG_COMMIT_THRESHOLD = 60;
 const DRAG_DIRECTION_LOCK = 10;
+const DRAG_MAX_OFFSET_RATIO = 1.4; // multiplicateur de `spacing` pour le plafond élastique
+const DRAG_RESISTANCE = 0.35; // fraction de mouvement conservée au-delà du plafond élastique
+const DRAG_FORCE_COMMIT_RATIO = 2.2; // multiplicateur de `spacing` : au-delà, relâchement forcé
 const CONTENT_HIDE_BUFFER = 16;
 const STAR_STAGGER = 0.06;
 const ADJACENT_SCALE = 0.85;
@@ -73,8 +75,6 @@ export function initSliderTestimonials(root = document) {
     DURATION = reduced ? 0 : 0.6;
     EASE = reduced ? "none" : "power3.out";
   });
-
-  const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
   // --- Accessibilité : landmark carousel ---------------------------------
   const heading = section.querySelector("h2");
@@ -193,13 +193,15 @@ export function initSliderTestimonials(root = document) {
           },
         });
       } else {
-        gsap.to(item, {
+        // L'opacité du 3ème plan (distance >= 2) n'est plus animée : elle est
+        // fixée instantanément pour éviter l'effet de "fondu" à la disparition.
+        // Seuls les items visibles (distance <= 1) conservent le fondu animé.
+        const toVars = {
           x,
           xPercent: -50,
           yPercent: -50,
           y: 0,
           scale,
-          opacity,
           rotateY,
           z,
           duration: DURATION,
@@ -211,10 +213,23 @@ export function initSliderTestimonials(root = document) {
           onComplete: () => {
             if (!becomingMoreCentral) item.style.zIndex = 10 - distance;
           },
-        });
+        };
+
+        if (isVisible) {
+          toVars.opacity = opacity;
+        } else {
+          gsap.set(item, { opacity });
+        }
+
+        gsap.to(item, toVars);
       }
 
       item.style.pointerEvents = isVisible ? "auto" : "none";
+      item.style.cursor = isActive
+        ? (isDragEnabled() ? "grab" : "")
+        : !isVisible
+          ? ""
+          : "pointer";
       item.classList.toggle("is-active", isActive);
       item.setAttribute("aria-hidden", isVisible ? "false" : "true");
       getFocusableChildren(item).forEach((el) => {
@@ -326,18 +341,24 @@ export function initSliderTestimonials(root = document) {
 
   prevBtn?.addEventListener("click", (e) => {
     e.preventDefault();
-    goTo(activeIndex - 1);
+    goTo(activeIndex + 1);
   });
 
   nextBtn?.addEventListener("click", (e) => {
     e.preventDefault();
-    goTo(activeIndex + 1);
+    goTo(activeIndex - 1);
   });
 
   const hasFinePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
+  let suppressNextClick = false;
+
   items.forEach((item, index) => {
     item.addEventListener("click", () => {
+      if (suppressNextClick) {
+        suppressNextClick = false;
+        return;
+      }
       if (index !== activeIndex) goTo(index);
     });
 
@@ -392,11 +413,41 @@ export function initSliderTestimonials(root = document) {
   }
 
   function isDragEnabled() {
-    return mobileMq.matches && !prefersReducedMotion();
+    return !prefersReducedMotion();
+  }
+
+  // Résistance élastique : au-delà de DRAG_MAX_OFFSET, le mouvement continue
+  // de suivre le pointeur mais très ralenti, pour limiter la distance de drag
+  // de l'item actif tout en gardant un feedback naturel.
+  function clampDragDelta(delta) {
+    const max = spacing * DRAG_MAX_OFFSET_RATIO;
+    if (Math.abs(delta) <= max) return delta;
+    const overflow = Math.abs(delta) - max;
+    return Math.sign(delta) * (max + overflow * DRAG_RESISTANCE);
+  }
+
+  // Termine le drag en cours : soit swipe (commit), soit retour à la position
+  // d'origine (annulation). Partagée entre relâchement naturel (pointerup) et
+  // relâchement forcé (plafond dur atteint pendant le drag).
+  function commitDrag(pointerId, deltaX) {
+    dragArea.style.cursor = isDragEnabled() ? "grab" : "";
+    unlockPageScroll();
+    document.body.style.userSelect = "";
+    suppressNextClick = true; // évite le click fantôme émis par le navigateur après le drag (souris)
+
+    dragArea.releasePointerCapture?.(pointerId);
+
+    if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD) {
+      goTo(deltaX < 0 ? activeIndex + 1 : activeIndex - 1);
+    } else {
+      render();
+    }
   }
 
   function onPointerDown(e) {
     if (!isDragEnabled()) return;
+
+    dragArea.style.cursor = "grabbing";
 
     dragState = {
       pointerId: e.pointerId,
@@ -420,6 +471,7 @@ export function initSliderTestimonials(root = document) {
         dragArea.setPointerCapture?.(dragState.pointerId);
         items.forEach((item) => gsap.killTweensOf(item));
         lockPageScroll();
+        document.body.style.userSelect = "none";
       } else if (Math.abs(dragState.deltaY) > DRAG_DIRECTION_LOCK) {
         dragState.locked = "y";
         dragState = null;
@@ -433,27 +485,37 @@ export function initSliderTestimonials(root = document) {
 
     e.preventDefault();
 
+    // Plafond dur : au-delà, on force le relâchement (comme si l'utilisateur
+    // avait lâché le pointeur), sans attendre le pointerup réel.
+    const forceCommitMax = spacing * DRAG_FORCE_COMMIT_RATIO;
+    if (Math.abs(dragState.deltaX) >= forceCommitMax) {
+      const { pointerId, deltaX } = dragState;
+      dragState = null;
+      commitDrag(pointerId, deltaX);
+      return;
+    }
+
+    const clampedX = clampDragDelta(dragState.deltaX);
+
     items.forEach((item, index) => {
       const diff = circularDiff(index, activeIndex);
       if (diff !== 0) return;
-      gsap.set(item, { x: dragState.deltaX, xPercent: -50, yPercent: -50 });
+      gsap.set(item, { x: clampedX, xPercent: -50, yPercent: -50 });
     });
   }
 
   function onPointerUp(e) {
     if (!dragState || e.pointerId !== dragState.pointerId) return;
 
-    const { deltaX, locked } = dragState;
+    const { pointerId, deltaX, locked } = dragState;
     dragState = null;
 
-    if (locked === "x") unlockPageScroll();
-    if (locked !== "x") return;
-
-    if (Math.abs(deltaX) >= DRAG_COMMIT_THRESHOLD) {
-      goTo(deltaX < 0 ? activeIndex + 1 : activeIndex - 1);
-    } else {
-      render();
+    if (locked !== "x") {
+      dragArea.style.cursor = isDragEnabled() ? "grab" : "";
+      return;
     }
+
+    commitDrag(pointerId, deltaX);
   }
 
   dragArea.addEventListener("pointerdown", onPointerDown);

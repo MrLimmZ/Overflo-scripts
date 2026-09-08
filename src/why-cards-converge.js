@@ -15,12 +15,15 @@ const DESKTOP_SCALE = 1;
 const MOBILE_SCALE = 0.6;
 
 const FINAL_ROTATE_RANGE = 32;
+const MIN_ROTATE_ABS = 6;
 
 const EXCLUSION_MARGIN = 32;
 const EDGE_MARGIN = 16;
 const CARD_GAP = 24;
 
-const MAX_PLACEMENT_ATTEMPTS = 60;
+const OFFSCREEN_ALLOWANCE = 0.5;
+
+const MAX_PLACEMENT_ATTEMPTS = 40;
 const MAX_RESOLVE_ITERATIONS = 40;
 
 const ENTRY_DURATION = 1;
@@ -31,13 +34,11 @@ const STAR_STAGGER = 0.06;
 const STAR_POP_DURATION = 0.4;
 const STAR_DELAY_AFTER_CARD = 0.25;
 
-// Les 4 coins de la section, en signe (x, y) relatif au centre — utilisé
-// pour répartir les cartes "coin par coin" plutôt qu'au hasard partout.
 const QUADRANTS = [
-  { sx: -1, sy: -1 }, // haut-gauche
-  { sx: 1, sy: -1 }, // haut-droite
-  { sx: -1, sy: 1 }, // bas-gauche
-  { sx: 1, sy: 1 }, // bas-droite
+  { sx: -1, sy: -1 },
+  { sx: 1, sy: -1 },
+  { sx: -1, sy: 1 },
+  { sx: 1, sy: 1 },
 ];
 
 function randomBetween(min, max) {
@@ -58,21 +59,32 @@ function shuffle(array) {
 }
 
 function pickDispersedRotations(total, range) {
-  if (total <= 1) return [randomBetween(-range, range)];
-  const step = (range * 2) / total;
-  const rotations = [];
-  for (let i = 0; i < total; i++) {
-    const bucketMin = -range + i * step;
-    const bucketMax = bucketMin + step;
-    rotations.push(randomBetween(bucketMin, bucketMax));
+  if (total <= 0) return [];
+
+  let negCount = Math.floor(total / 2);
+  let posCount = total - negCount;
+  if (total % 2 === 1 && Math.random() < 0.5) {
+    [negCount, posCount] = [posCount, negCount];
   }
+
+  function bucketsFor(count, sign) {
+    if (count === 0) return [];
+    const lo = MIN_ROTATE_ABS;
+    const hi = range;
+    const step = (hi - lo) / count;
+    const values = [];
+    for (let i = 0; i < count; i++) {
+      const bucketMin = lo + i * step;
+      const bucketMax = bucketMin + step;
+      values.push(sign * randomBetween(bucketMin, bucketMax));
+    }
+    return values;
+  }
+
+  const rotations = [...bucketsFor(negCount, -1), ...bucketsFor(posCount, 1)];
   return shuffle(rotations);
 }
 
-// Assigne un coin à chaque carte : cycle sur les 4 quadrants (mélangés à
-// chaque tour) pour équilibrer la répartition même avec plus de 4 cartes,
-// puis mélange l'ordre final pour que ce ne soit pas toujours les mêmes
-// items dans les mêmes coins.
 function assignQuadrants(total) {
   const assignment = [];
   while (assignment.length < total) {
@@ -81,11 +93,6 @@ function assignQuadrants(total) {
   return shuffle(assignment.slice(0, total));
 }
 
-// Boîte englobante réelle d'un rectangle (halfW x halfH) après rotation —
-// nécessaire car une carte tournée occupe visuellement plus d'espace que
-// ses dimensions non tournées (les coins dépassent). Sans ça, la
-// vérification de chevauchement sous-estime l'encombrement réel, ce qui
-// laissait le texte central passer devant le coin de certaines cartes.
 function rotatedHalfExtents(halfW, halfH, rotateDeg) {
   const rad = (rotateDeg * Math.PI) / 180;
   const cos = Math.abs(Math.cos(rad));
@@ -114,13 +121,77 @@ function totalOverlap(x, y, halfW, halfH, placed) {
   return sum;
 }
 
-// Passe de résolution déterministe : une fois la meilleure position issue
-// du tirage aléatoire trouvée (qui peut encore chevaucher si les 60
-// tentatives n'ont rien trouvé de libre), on pousse la carte hors de la
-// zone d'exclusion du header puis hors de chaque carte déjà placée, en la
-// reclampant dans son quadrant à chaque itération. Ça élimine les
-// chevauchements résiduels au lieu de se contenter du "moins pire" tiré
-// au hasard.
+function trySafeAxisPosition(range0, range1, center, safeMin) {
+  const lo = Math.min(range0, range1);
+  const hi = Math.max(range0, range1);
+  const leftHi = Math.min(hi, center - safeMin);
+  const rightLo = Math.max(lo, center + safeMin);
+
+  const candidates = [];
+  if (leftHi >= lo) candidates.push([lo, leftHi]);
+  if (hi >= rightLo) candidates.push([rightLo, hi]);
+  if (!candidates.length) return null;
+
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function sampleSafeInRange(xRange, yRange, exclusion, cardHalfW, cardHalfH) {
+  if (!exclusion) {
+    return {
+      x: randomBetween(xRange[0], xRange[1]),
+      y: randomBetween(yRange[0], yRange[1]),
+    };
+  }
+
+  const xSafeMin = exclusion.halfW + cardHalfW;
+  const ySafeMin = exclusion.halfH + cardHalfH;
+
+  const xSafe = trySafeAxisPosition(xRange[0], xRange[1], exclusion.x, xSafeMin);
+  const ySafe = trySafeAxisPosition(yRange[0], yRange[1], exclusion.y, ySafeMin);
+
+  if (!xSafe && !ySafe) return null;
+
+  const xRoom = xSafe ? xSafe[1] - xSafe[0] : -Infinity;
+  const yRoom = ySafe ? ySafe[1] - ySafe[0] : -Infinity;
+
+  if (xSafe && (!ySafe || xRoom >= yRoom)) {
+    return {
+      x: randomBetween(xSafe[0], xSafe[1]),
+      y: randomBetween(yRange[0], yRange[1]),
+    };
+  }
+
+  return {
+    x: randomBetween(xRange[0], xRange[1]),
+    y: randomBetween(ySafe[0], ySafe[1]),
+  };
+}
+
+function subRange(a, b, t0, t1) {
+  const p0 = a + t0 * (b - a);
+  const p1 = a + t1 * (b - a);
+  return [Math.min(p0, p1), Math.max(p0, p1)];
+}
+
+function pushOutOfExclusion(x, y, cardHalfW, cardHalfH, exclusion, hardXRange, hardYRange) {
+  if (!exclusion) return { x, y };
+
+  const overlapX = cardHalfW + exclusion.halfW - Math.abs(x - exclusion.x);
+  const overlapY = cardHalfH + exclusion.halfH - Math.abs(y - exclusion.y);
+  if (overlapX <= 0 || overlapY <= 0) return { x, y };
+
+  if (overlapX <= overlapY) {
+    x += x >= exclusion.x ? overlapX : -overlapX;
+  } else {
+    y += y >= exclusion.y ? overlapY : -overlapY;
+  }
+
+  x = clamp(x, hardXRange[0], hardXRange[1]);
+  y = clamp(y, hardYRange[0], hardYRange[1]);
+
+  return { x, y };
+}
+
 function resolveOverlaps({
   x,
   y,
@@ -130,8 +201,8 @@ function resolveOverlaps({
   gapHalfH,
   placed,
   exclusion,
-  xRange,
-  yRange,
+  hardXRange,
+  hardYRange,
 }) {
   for (let iter = 0; iter < MAX_RESOLVE_ITERATIONS; iter++) {
     let moved = false;
@@ -162,8 +233,8 @@ function resolveOverlaps({
       }
     }
 
-    x = clamp(x, xRange[0], xRange[1]);
-    y = clamp(y, yRange[0], yRange[1]);
+    x = clamp(x, hardXRange[0], hardXRange[1]);
+    y = clamp(y, hardYRange[0], hardYRange[1]);
 
     if (!moved) break;
   }
@@ -196,11 +267,33 @@ function computeCardTargets(
     };
   }
 
-  // Au premier calcul (entrée ou état statique), on tire de nouveaux
-  // quadrants. Au resize, on réutilise ceux déjà assignés (passés par
-  // repositionCards) pour ne pas rebattre l'identité des cartes — seule la
-  // position doit s'adapter à la nouvelle taille de section.
   const quadrants = quadrantsOverride || assignQuadrants(items.length);
+
+  const groupsByQuadrant = new Map();
+  quadrants.forEach((q, index) => {
+    const key = `${q.sx},${q.sy}`;
+    if (!groupsByQuadrant.has(key)) groupsByQuadrant.set(key, []);
+    groupsByQuadrant.get(key).push(index);
+  });
+
+  const cellByIndex = new Map();
+  groupsByQuadrant.forEach((indices) => {
+    const n = indices.length;
+    const cols = Math.ceil(Math.sqrt(n));
+    const rows = Math.ceil(n / cols);
+    const cells = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        cells.push({ col: c, row: r });
+      }
+    }
+    const shuffledCells = shuffle(cells).slice(0, n);
+    const shuffledIndices = shuffle(indices);
+    shuffledIndices.forEach((itemIndex, i) => {
+      cellByIndex.set(itemIndex, { ...shuffledCells[i], cols, rows });
+    });
+  });
+
   const placed = [];
   const targets = [];
 
@@ -211,43 +304,75 @@ function computeCardTargets(
     const baseHalfW = (item.offsetWidth * scale) / 2;
     const baseHalfH = (item.offsetHeight * scale) / 2;
 
-    // Encombrement réel après rotation — utilisé pour toutes les
-    // vérifications de chevauchement (texte et autres cartes).
     const rotated = rotatedHalfExtents(baseHalfW, baseHalfH, rotate);
     const cardHalfW = rotated.halfW;
     const cardHalfH = rotated.halfH;
     const gapHalfW = cardHalfW + CARD_GAP / 2;
     const gapHalfH = cardHalfH + CARD_GAP / 2;
 
-    const maxX = Math.max(0, halfW - EDGE_MARGIN - cardHalfW);
-    const maxY = Math.max(0, halfH - EDGE_MARGIN - cardHalfH);
+    // Autorise la carte à dépasser légèrement du cadre de la section
+    // (coupée par l'overflow:hidden), jusqu'à OFFSCREEN_ALLOWANCE.
+    const maxX = Math.max(
+      0,
+      halfW - EDGE_MARGIN - cardHalfW * (1 - OFFSCREEN_ALLOWANCE),
+    );
+    const maxY = Math.max(
+      0,
+      halfH - EDGE_MARGIN - cardHalfH * (1 - OFFSCREEN_ALLOWANCE),
+    );
 
-    // Bornes de tirage contraintes au quadrant assigné (demande "coin par
-    // coin") : le signe de x/y est fixé, seule la magnitude est aléatoire.
-    const xRange = quadrant.sx < 0 ? [-maxX, 0] : [0, maxX];
-    const yRange = quadrant.sy < 0 ? [-maxY, 0] : [0, maxY];
+    const hardXRange = [-maxX, maxX];
+    const hardYRange = [-maxY, maxY];
+
+    const xRangeFull = quadrant.sx < 0 ? [-maxX, 0] : [0, maxX];
+    const yRangeFull = quadrant.sy < 0 ? [-maxY, 0] : [0, maxY];
+
+    const cell = cellByIndex.get(index);
+    const xCellRange = subRange(
+      xRangeFull[0],
+      xRangeFull[1],
+      cell.col / cell.cols,
+      (cell.col + 1) / cell.cols,
+    );
+    const yCellRange = subRange(
+      yRangeFull[0],
+      yRangeFull[1],
+      cell.row / cell.rows,
+      (cell.row + 1) / cell.rows,
+    );
 
     let bestX = 0;
     let bestY = 0;
-    let bestOverlap = Infinity;
+    let bestScore = Infinity;
     let found = false;
 
     for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
-      const x = randomBetween(xRange[0], xRange[1]);
-      const y = randomBetween(yRange[0], yRange[1]);
+      let sample =
+        sampleSafeInRange(xCellRange, yCellRange, exclusion, cardHalfW, cardHalfH) ||
+        sampleSafeInRange(xRangeFull, yRangeFull, exclusion, cardHalfW, cardHalfH) ||
+        sampleSafeInRange(hardXRange, hardYRange, exclusion, cardHalfW, cardHalfH);
 
-      const overlapsHeader =
-        exclusion &&
-        rectsOverlap(
-          x,
-          y,
-          cardHalfW,
-          cardHalfH,
-          exclusion.x,
-          exclusion.y,
-          exclusion.halfW,
-          exclusion.halfH,
-        );
+      let overlapsHeader = false;
+      if (!sample) {
+        sample = {
+          x: randomBetween(hardXRange[0], hardXRange[1]),
+          y: randomBetween(hardYRange[0], hardYRange[1]),
+        };
+        overlapsHeader =
+          !!exclusion &&
+          rectsOverlap(
+            sample.x,
+            sample.y,
+            cardHalfW,
+            cardHalfH,
+            exclusion.x,
+            exclusion.y,
+            exclusion.halfW,
+            exclusion.halfH,
+          );
+      }
+
+      const { x, y } = sample;
 
       const overlapsCard = placed.some((p) =>
         rectsOverlap(x, y, gapHalfW, gapHalfH, p.x, p.y, p.halfW, p.halfH),
@@ -260,19 +385,13 @@ function computeCardTargets(
         break;
       }
 
-      if (!overlapsHeader) {
-        const overlap = totalOverlap(x, y, gapHalfW, gapHalfH, placed);
-        if (overlap < bestOverlap) {
-          bestOverlap = overlap;
-          bestX = x;
-          bestY = y;
-        }
+      const cardOverlap = totalOverlap(x, y, gapHalfW, gapHalfH, placed);
+      const score = cardOverlap + (overlapsHeader ? 1e9 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        bestX = x;
+        bestY = y;
       }
-    }
-
-    if (!found && bestOverlap === Infinity) {
-      bestX = randomBetween(xRange[0], xRange[1]);
-      bestY = randomBetween(yRange[0], yRange[1]);
     }
 
     if (!found) {
@@ -285,12 +404,24 @@ function computeCardTargets(
         gapHalfH,
         placed,
         exclusion,
-        xRange,
-        yRange,
+        hardXRange,
+        hardYRange,
       });
       bestX = resolved.x;
       bestY = resolved.y;
     }
+    
+    const pushed = pushOutOfExclusion(
+      bestX,
+      bestY,
+      cardHalfW,
+      cardHalfH,
+      exclusion,
+      hardXRange,
+      hardYRange,
+    );
+    bestX = pushed.x;
+    bestY = pushed.y;
 
     placed.push({ x: bestX, y: bestY, halfW: gapHalfW, halfH: gapHalfH });
     targets.push({ x: bestX, y: bestY, rotate });
@@ -323,9 +454,6 @@ export function initWhyCardsConverge(root = document) {
   let arrivalTimeline = null;
   let hasPlayed = false;
   let currentScale = DESKTOP_SCALE;
-  // Rotations + quadrants décidés une fois (à l'entrée ou en statique) —
-  // réutilisés par repositionCards() pour que le resize ne rebatte pas les
-  // cartes, seulement leurs positions.
   let lastRotations = null;
   let lastQuadrants = null;
 
@@ -438,13 +566,9 @@ export function initWhyCardsConverge(root = document) {
     });
   }
 
-  // Recalcule uniquement les positions (x/y) pour la taille de section
-  // actuelle, en gardant les rotations/quadrants déjà décidés — appelé au
-  // resize, tant que les cartes ont déjà été placées (entrée jouée ou
-  // état statique appliqué). Ne fait rien avant ça (cartes encore cachées).
   function repositionCards() {
     if (!lastRotations || !lastQuadrants) return;
-    if (arrivalTimeline) return; // on ne touche pas pendant l'animation d'entrée
+    if (arrivalTimeline) return;
     const targets = computeCardTargets(
       section,
       header,

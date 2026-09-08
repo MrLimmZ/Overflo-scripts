@@ -5,7 +5,6 @@ import { getControllerForElement } from "./decorative-videos.js";
 
 const PARALLAX_STRENGTH = 3;
 const TILT_STRENGTH = 0.6;
-const ENTRY_TILT = 35;
 const MOUSE_EASE = 0.08;
 const MOBILE_BREAKPOINT = 767;
 const MOBILE_ENTER_DURATION = 1.2;
@@ -153,21 +152,15 @@ export function initZoomReveal(root = document) {
       const x = offset.x * progress + mouseX * PARALLAX_STRENGTH * depth;
       const y = offset.y * progress + mouseY * PARALLAX_STRENGTH * depth;
 
-      const entryFactor = 1 - progress;
-      const dirX = offset.x !== 0 ? Math.sign(offset.x) : 0;
-      const dirY = offset.y !== 0 ? Math.sign(offset.y) : 0;
-
-      const entryRotateY = -dirX * ENTRY_TILT * entryFactor;
-      const entryRotateX = dirY * ENTRY_TILT * entryFactor;
-
+      // Le tilt d'entrée a été retiré : seul le tilt lié à la souris subsiste.
       const mouseRotateY = mouseX * TILT_STRENGTH * depth * progress;
       const mouseRotateX = -mouseY * TILT_STRENGTH * depth * progress;
 
       gsap.set(tool, {
         x,
         y,
-        rotateX: entryRotateX + mouseRotateX,
-        rotateY: entryRotateY + mouseRotateY,
+        rotateX: mouseRotateX,
+        rotateY: mouseRotateY,
         scale: 0.4 + 0.6 * progress,
         opacity: progress,
       });

@@ -2,6 +2,7 @@
 
 import { reportWipeProgress } from "./utils/shape-follow.js";
 import { isScrollLocked, acquireScrollLock, releaseScrollLock } from "./utils/scroll-lock.js";
+import { getControllerForElement } from "./decorative-videos.js";
 
 const OWNER_ID = "explain-steps";
 const SLIDE_DURATION = 0.7;
@@ -18,6 +19,8 @@ const RETURN_FADE_LEAD = 0;
 const MOBILE_REVEAL_DURATION = 1.1;
 const MOBILE_REVEAL_THRESHOLD = 0.15;
 
+const REENTRY_INSET = 4;
+
 function lenisStop() {
   acquireScrollLock(OWNER_ID);
   window.lenis?.stop();
@@ -27,7 +30,11 @@ function lenisStart() {
   releaseScrollLock(OWNER_ID);
 }
 function forceScrollTo(y) {
-  window.scrollTo(0, y);
+  if (window.lenis) {
+    window.lenis.scrollTo(y, { immediate: true, force: true });
+  } else {
+    window.scrollTo(0, y);
+  }
   ScrollTrigger.update();
 }
 function clipHidden(dir) {
@@ -56,8 +63,6 @@ function killWipeTween(banner) {
   if (banner) banner.classList.remove("is-wiping");
 }
 
-// `timeline` est désormais optionnel : si null, le tween joue seul
-// (utilisé pour la reveal mobile, indépendante de tout ScrollTrigger/pin).
 function tweenClipReveal(timeline, banner, dir, fromHidden, toHidden, duration, ease, position, coupledToShape = false) {
   if (!banner) return;
   killWipeTween(banner);
@@ -100,6 +105,18 @@ function setPinStackOrder(section, zIndexValue) {
   }
 }
 
+// Résout le controller vidéo (decorative-videos.js) associé à une banner de
+// step. Les vidéos de steps utilisent data-video-trigger="manual" : leur
+// lecture/pause est pilotée exclusivement ici, en fonction de la step
+// active — plus de dépendance à l'IntersectionObserver générique de
+// decorative-videos.js, qui provoquait un déclenchement instable/aléatoire
+// (course entre deux systèmes indépendants : le clip-path/opacity géré ici,
+// et la visibilité DOM brute évaluée là-bas).
+function getBannerVideoController(banner) {
+  const video = banner?.querySelector("video[data-controller-id]");
+  return video ? getControllerForElement(video) : null;
+}
+
 export function initExplainSteps(root = document) {
   if (typeof ScrollTrigger === "undefined") return;
 
@@ -130,8 +147,6 @@ export function initExplainSteps(root = document) {
     })),
   ];
 
-  // Banners déjà révélés une fois sur mobile : ne rejouent jamais l'ouverture,
-  // même si setup() est rappelé (ex: mobile -> desktop -> mobile).
   const revealedBanners = new WeakSet();
   let mobileRevealObserver = null;
   let mobileRevealTimerId = null;
@@ -140,6 +155,7 @@ export function initExplainSteps(root = document) {
     if (!banner || revealedBanners.has(banner)) return;
     revealedBanners.add(banner);
     tweenClipReveal(null, banner, 1, 100, 0, MOBILE_REVEAL_DURATION, MASK_EASE, 0, false);
+    getBannerVideoController(banner)?.trigger();
   }
 
   function isStepAlreadyVisible(step) {
@@ -152,14 +168,6 @@ export function initExplainSteps(root = document) {
     return ratio >= MOBILE_REVEAL_THRESHOLD;
   }
 
-  // ScrollTrigger.refresh() peut être appelé par plusieurs modules sur le
-  // même resize (home-header.js fait de même) et bufferise/déporte en
-  // interne son recalcul réel — un simple requestAnimationFrame n'est pas
-  // fiable pour garantir que le layout est settled. On écoute donc
-  // l'événement "refresh" (déclenché seulement une fois le recalcul
-  // terminé pour de vrai) avant de mesurer/observer les steps. Filet de
-  // sécurité : si rien ne déclenche jamais ce refresh (cas limite), on
-  // retombe sur setupMobileReveal après un court délai.
   function scheduleMobileRevealSetup() {
     if (mobileRevealTimerId) {
       clearTimeout(mobileRevealTimerId);
@@ -189,8 +197,6 @@ export function initExplainSteps(root = document) {
     if (typeof ScrollTrigger !== "undefined") {
       ScrollTrigger.addEventListener("refresh", onRefresh);
     }
-    // Filet de sécurité (ex: aucun refresh() déclenché derrière, ou
-    // ScrollTrigger indisponible).
     mobileRevealTimerId = setTimeout(run, 400);
   }
 
@@ -200,27 +206,12 @@ export function initExplainSteps(root = document) {
       mobileRevealObserver = null;
     }
 
-    // On observe le STEP parent, pas la banner elle-même : la banner porte
-    // notre propre clip-path "fermé" (inset(100% ...), 0% de surface
-    // visible), et l'IntersectionObserver calcule l'intersection sur la
-    // zone réellement visible après clip-path plutôt que sur la boîte de
-    // layout brute — un élément qu'on clippe nous-mêmes à 0% ne peut alors
-    // jamais reporter isIntersecting:true, peu importe sa position réelle
-    // à l'écran. Le step parent n'a lui aucun clip-path, donc son
-    // intersection reflète fidèlement le scroll.
     const pendingPairs = steps.filter(
       ({ banner }) => banner && !revealedBanners.has(banner)
     );
 
     if (!pendingPairs.length) return;
 
-    // Passage desktop -> mobile alors qu'on est déjà scrollé plus bas dans
-    // la page (cas courant : on explore en desktop, puis on rétrécit la
-    // fenêtre) : une ou plusieurs steps peuvent déjà être visibles à
-    // l'instant du switch. On ne compte pas uniquement sur le premier
-    // batch de l'IntersectionObserver (qui peut être capturé pendant un
-    // état de layout encore instable juste après le kill du pin desktop) —
-    // on vérifie et révèle immédiatement ce qui est déjà dans le viewport.
     const stillPending = [];
     pendingPairs.forEach(({ step, banner }) => {
       if (isStepAlreadyVisible(step)) {
@@ -302,17 +293,18 @@ export function initExplainSteps(root = document) {
       gsap.set(step, { y });
       if (banner) gsap.set(banner, { y: -y });
       step.style.pointerEvents = index === activeIndex ? "auto" : "none";
+
+      const controller = getBannerVideoController(banner);
+      if (controller) {
+        if (index === activeIndex) controller.replay();
+        else controller.pause();
+      }
     });
     setStepStacking(activeIndex, -1);
     setBannerStable(activeIndex);
     currentActiveIndex = activeIndex;
   }
 
-  // Repositionne juste les step/banner déjà en place (translateY) sur la
-  // nouvelle hauteur de viewport, sans toucher aux états de banner
-  // (opacity/clipPath/stacking) — contrairement à setStepsImmediate, qui
-  // remettrait tout à plat. Utilisé au resize (voir syncOnRefresh), quand
-  // on ne veut pas interrompre visuellement l'état courant.
   function repositionStepsForViewport() {
     steps.forEach(({ step, banner }, index) => {
       const y = targetY(index, currentActiveIndex);
@@ -339,7 +331,6 @@ export function initExplainSteps(root = document) {
   let boundarySettledAt = performance.now();
   const REENTRY_COOLDOWN_MS = 250;
   const BOUNDARY_COOLDOWN_MS = 250;
-  const BENTO_BOUNDARY_TOLERANCE = 60;
 
   const controller = new AbortController();
   const { signal } = controller;
@@ -356,13 +347,6 @@ export function initExplainSteps(root = document) {
     return false;
   }
 
-  // Même idiome que home-header.js : on se branche sur l'événement global
-  // "refreshInit" de ScrollTrigger (déclenché avant chaque refresh, lui-même
-  // déjà provoqué sur tout resize par le ResizeObserver de core.js), au
-  // lieu d'un listener resize séparé. bandStep est recalculé AVANT que
-  // ScrollTrigger ne réévalue le "end" du pin (qui dépend de bandStep),
-  // donc la distance de pin reste synchronisée avec la vraie hauteur de
-  // viewport après un resize — plus de désynchronisation.
   function syncOnRefresh() {
     if (cleanupIfDetached()) return;
     if (mobileMq.matches) return;
@@ -370,8 +354,6 @@ export function initExplainSteps(root = document) {
 
     bandStep = window.innerHeight * 0.8;
 
-    // On ne retouche pas la position pendant une transition en cours :
-    // elle se resynchronisera d'elle-même au prochain stepToward().
     if (activeTween) return;
     repositionStepsForViewport();
   }
@@ -403,7 +385,7 @@ export function initExplainSteps(root = document) {
   function snapToLastStep() {
     locked = true;
     lenisStop();
-    forceScrollTo(bandCenter(total - 1));
+    forceScrollTo(trigger.end - REENTRY_INSET);
     pinReenteredAt = performance.now(); 
     boundarySettledAt = performance.now();
     gsap.delayedCall(UNSTOP_DELAY, () => {
@@ -412,30 +394,33 @@ export function initExplainSteps(root = document) {
     });
   }
 
-  let wasNearBentoBoundary = false;
+  let lastBoundarySign = null;
 
   function onNativeScroll() {
     if (mobileMq.matches) return;
     if (locked) {
-      wasNearBentoBoundary = false;
+      lastBoundarySign = null;
       return;
     }
     if (cleanupIfDetached()) return;
+    if (!trigger) return;
 
     const y = window.scrollY;
-    const nearBoundary = Math.abs(y - trigger.end) <= BENTO_BOUNDARY_TOLERANCE;
+    const diff = y - trigger.end;
+    const sign = diff === 0 ? lastBoundarySign ?? 0 : Math.sign(diff);
 
-    if (!nearBoundary) {
-      wasNearBentoBoundary = false;
+    if (lastBoundarySign === null) {
+      lastBoundarySign = sign;
       return;
     }
-    if (wasNearBentoBoundary) return; // déjà dans la zone, pas un nouveau franchissement
-    wasNearBentoBoundary = true;
+    if (sign === lastBoundarySign) return;
+
+    lastBoundarySign = sign;
 
     if (performance.now() - boundarySettledAt < BOUNDARY_COOLDOWN_MS) return;
 
     window.lenis?.stop();
-    if (trigger.isActive) {
+    if (sign > 0) {
       snapToBento();
     } else {
       snapToLastStep();
@@ -490,7 +475,6 @@ export function initExplainSteps(root = document) {
       return;
     }
 
-    // Même logique de déclenchement direct que onWheel, pour le tactile.
     if (!trigger.isActive) return;
     const currentY = e.touches[0]?.clientY ?? touchStartY;
     const deltaY = touchStartY - currentY;
@@ -570,6 +554,11 @@ export function initExplainSteps(root = document) {
       if (index === outgoingIndex || index === nextIndex) return;
       resetBannerNeutral(banner);
     });
+
+    // Pilotage vidéo explicite : la step qui devient active relance sa
+    // vidéo depuis le début, celle qui devient inactive se met en pause.
+    getBannerVideoController(outgoingBanner)?.pause();
+    getBannerVideoController(incomingBanner)?.replay();
 
     if (dir > 0) {
       if (outgoingBanner) {
@@ -754,6 +743,7 @@ export function initExplainSteps(root = document) {
     });
 
     setPinStackOrder(section, 0);
+    lastBoundarySign = null;
   }
 
   function applyMobileStatic() {
@@ -778,12 +768,8 @@ export function initExplainSteps(root = document) {
       gsap.killTweensOf(banner);
 
       if (revealedBanners.has(banner)) {
-        // Déjà révélé une fois précédemment (ex: mobile -> desktop -> mobile) :
-        // on le laisse simplement visible, pas de replay de l'ouverture.
         gsap.set(banner, { clearProps: "opacity,clipPath" });
       } else {
-        // État initial "fermé" (mask bas) en attendant l'entrée dans le
-        // viewport ; voir setupMobileReveal / revealBannerMobile.
         gsap.set(banner, { opacity: 1, clipPath: clipHidden(1) });
       }
       banner.style.pointerEvents = "";
