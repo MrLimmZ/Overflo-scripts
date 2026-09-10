@@ -21,6 +21,12 @@ const MOBILE_REVEAL_THRESHOLD = 0.15;
 
 const REENTRY_INSET = 4;
 
+// Passe à false pour couper les logs de debug du reveal vidéo mobile.
+const DEBUG_EXPLAIN = true;
+function debugLog(...args) {
+  if (DEBUG_EXPLAIN) console.log("[explain-steps]", ...args);
+}
+
 function lenisStop() {
   acquireScrollLock(OWNER_ID);
   window.lenis?.stop();
@@ -136,14 +142,17 @@ export function initExplainSteps(root = document) {
   const total = stepEls.length + 1;
   if (total < 2) return;
 
-  const MOBILE_BREAKPOINT = 767;
+  const MOBILE_BREAKPOINT = 992;
   const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
   const steps = [
     { step: virtualStepEl, banner: null },
     ...stepEls.map((step) => ({
       step,
-      banner: step.querySelector(":scope > .explain-step-banner"),
+      // Pas de ":scope >" : .explain-step-banner est maintenant nichée dans
+      // .explain-step--center, mais le nom de classe reste assez unique
+      // pour ne matcher que le bon élément quelle que soit la profondeur.
+      banner: step.querySelector(".explain-step-banner"),
     })),
   ];
 
@@ -154,6 +163,7 @@ export function initExplainSteps(root = document) {
   function revealBannerMobile(banner) {
     if (!banner || revealedBanners.has(banner)) return;
     revealedBanners.add(banner);
+    debugLog("revealBannerMobile", { banner, hasController: !!getBannerVideoController(banner) });
     tweenClipReveal(null, banner, 1, 100, 0, MOBILE_REVEAL_DURATION, MASK_EASE, 0, false);
     getBannerVideoController(banner)?.trigger();
   }
@@ -161,6 +171,15 @@ export function initExplainSteps(root = document) {
   function isStepAlreadyVisible(step) {
     const rect = step.getBoundingClientRect();
     const innerHeight = window.innerHeight || document.documentElement.clientHeight;
+
+    // Le bas de la step est déjà passé au-dessus du viewport : on considère
+    // la step comme "vue", sinon elle resterait masquée indéfiniment tant
+    // qu'on ne remonte pas manuellement au-dessus d'elle. Ce cas arrive
+    // typiquement en passant desktop -> tablette pendant qu'on est scrollé
+    // loin dans le pin : le pin se tue et le flow mobile (bien plus court)
+    // laisse le scroll actuel au-delà du contenu.
+    if (rect.bottom <= 0) return true;
+
     const visibleTop = Math.max(rect.top, 0);
     const visibleBottom = Math.min(rect.bottom, innerHeight);
     const visibleHeight = Math.max(0, visibleBottom - visibleTop);
@@ -178,6 +197,7 @@ export function initExplainSteps(root = document) {
     function run() {
       if (done) return;
       done = true;
+      debugLog("scheduleMobileRevealSetup run()", { mobileMatches: mobileMq.matches, inDom: document.body.contains(section) });
       if (typeof ScrollTrigger !== "undefined") {
         ScrollTrigger.removeEventListener("refresh", onRefresh);
       }
@@ -210,16 +230,21 @@ export function initExplainSteps(root = document) {
       ({ banner }) => banner && !revealedBanners.has(banner)
     );
 
+    debugLog("setupMobileReveal", { totalSteps: steps.length, pendingCount: pendingPairs.length });
+
     if (!pendingPairs.length) return;
 
     const stillPending = [];
     pendingPairs.forEach(({ step, banner }) => {
       if (isStepAlreadyVisible(step)) {
+        debugLog("setupMobileReveal: reveal immédiat (déjà visible)", { step });
         revealBannerMobile(banner);
       } else {
         stillPending.push({ step, banner });
       }
     });
+
+    debugLog("setupMobileReveal: steps observées via IntersectionObserver", { stillPendingCount: stillPending.length });
 
     if (!stillPending.length) return;
 
@@ -228,6 +253,7 @@ export function initExplainSteps(root = document) {
     mobileRevealObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
+          debugLog("IntersectionObserver entry", { isIntersecting: entry.isIntersecting, target: entry.target, ratio: entry.intersectionRatio });
           if (!entry.isIntersecting) return;
           const banner = stepToBanner.get(entry.target);
           if (!banner) return;
@@ -556,8 +582,11 @@ export function initExplainSteps(root = document) {
     });
 
     // Pilotage vidéo explicite : la step qui devient active relance sa
-    // vidéo depuis le début, celle qui devient inactive se met en pause.
-    getBannerVideoController(outgoingBanner)?.pause();
+    // vidéo depuis le début, dès le lancement de la transition, pour
+    // qu'elle ait déjà du contenu au moment où le wipe la révèle. La vidéo
+    // sortante, elle, continue de jouer PENDANT tout le wipe (elle reste
+    // visible à l'écran jusqu'à la fin de l'animation) — sa pause est donc
+    // différée dans le onComplete de la timeline, pas déclenchée ici.
     getBannerVideoController(incomingBanner)?.replay();
 
     if (dir > 0) {
@@ -594,6 +623,7 @@ export function initExplainSteps(root = document) {
       onComplete: () => {
         activeTween = null;
         if (outgoingBanner) resetBannerNeutral(outgoingBanner);
+        getBannerVideoController(outgoingBanner)?.pause();
         setStepStacking(nextIndex, -1);
 
         boundarySettledAt = performance.now();
@@ -695,8 +725,17 @@ export function initExplainSteps(root = document) {
     teardownMobileReveal();
 
     if (hasSetupOnce) {
-      window.scrollTo(0, section.offsetTop);
-      ScrollTrigger.update();
+      // Ne recale le scroll vers .explain que si on était déjà dedans (ou
+      // au-delà) en layout mobile — sinon (ex: on est encore tout en haut
+      // de page, dans .home-header), ce recalage est injustifié et vient
+      // percuter la logique de re-entrée du pin home-header : le scroll
+      // saute à section.offsetTop avant même que le premier wheel event du
+      // home-header n'ait eu la moindre chance de se déclencher, "mangeant"
+      // la détection isAtHomeHeaderTop() juste après un aller-retour mobile.
+      if (window.scrollY >= section.offsetTop) {
+        window.scrollTo(0, section.offsetTop);
+        ScrollTrigger.update();
+      }
     }
 
     bandStep = window.innerHeight * 0.8;
@@ -747,6 +786,7 @@ export function initExplainSteps(root = document) {
   }
 
   function applyMobileStatic() {
+    debugLog("applyMobileStatic", { revealedCount: steps.filter(({banner}) => banner && revealedBanners.has(banner)).length, totalBanners: steps.filter(({banner}) => banner).length });
     if (trigger) {
       trigger.kill();
       trigger = null;
@@ -767,10 +807,27 @@ export function initExplainSteps(root = document) {
       killWipeTween(banner);
       gsap.killTweensOf(banner);
 
+      // La contre-translation (y: -y) posée par stepToward/setStepsImmediate
+      // sur desktop reste en inline style sur la banner elle-même — le
+      // clearProps ci-dessus ne nettoie que le step wrapper, jamais la
+      // banner. Sans ça, la vidéo reste décalée hors champ en mobile même
+      // si le clip-path/opacity sont corrects.
+      gsap.set(banner, { clearProps: "y" });
+
       if (revealedBanners.has(banner)) {
         gsap.set(banner, { clearProps: "opacity,clipPath" });
       } else {
         gsap.set(banner, { opacity: 1, clipPath: clipHidden(1) });
+        // Reset explicite du controller vidéo, comme le fait déjà
+        // zoom-reveal.js via resetRevealVideos(). Sans ça, une vidéo lancée
+        // côté desktop (setStepsImmediate -> replay() sur le step actif)
+        // peut être encore en train de charger/jouer quand on bascule en
+        // mobile : le banner se masque mais la vidéo continue son cycle en
+        // arrière-plan, et le .trigger() du reveal mobile arrive ensuite
+        // sur un état incohérent (canplay déjà consommé, play() en conflit
+        // avec le load() implicite). .reset() vide les timers en attente et
+        // repart d'un video.load() propre avant le prochain trigger().
+        getBannerVideoController(banner)?.reset();
       }
       banner.style.pointerEvents = "";
     });

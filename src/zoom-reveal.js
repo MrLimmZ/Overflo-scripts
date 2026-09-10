@@ -6,7 +6,7 @@ import { getControllerForElement } from "./decorative-videos.js";
 const PARALLAX_STRENGTH = 3;
 const TILT_STRENGTH = 0.6;
 const MOUSE_EASE = 0.08;
-const MOBILE_BREAKPOINT = 767;
+const MOBILE_BREAKPOINT = 992;
 const MOBILE_ENTER_DURATION = 1.2;
 const FULL_PROGRESS_THRESHOLD = 0.999;
 const TOOLS_VIDEO_STAGGER = 80;

@@ -8,10 +8,16 @@ const OWNER_ID = "home-header-snap";
 
 const BOUNDARY_TOLERANCE = 60;
 const TOUCH_SWIPE_THRESHOLD = 40;
-const MOBILE_BREAKPOINT = 767;
+const MOBILE_BREAKPOINT = 992;
 
 const SCROLL_DURATION = 1.6;
 const HARD_UNLOCK_FAILSAFE = 3000;
+
+// Passe à false pour couper les logs de debug du snap home-header.
+const DEBUG_SNAP = true;
+function debugLog(...args) {
+  if (DEBUG_SNAP) console.log("[home-header]", ...args);
+}
 
 const CONTENT_DURATION = SCROLL_DURATION * 0.35;
 const CONTENT_EASE = "power3.inOut";
@@ -60,10 +66,14 @@ export function initHomeHeaderSnap(root = document) {
   const next = section.nextElementSibling;
 
   const contentWrapper = section.querySelector(":scope > .home-header--content");
+  // Pas de ":scope >" ici : ces trois classes sont assez spécifiques pour ne
+  // matcher que les bons éléments, et ça reste robuste si un wrapper
+  // supplémentaire (ex: pour un max-width) s'intercale entre
+  // .home-header--content et title/banner/content.
   const contentEls = contentWrapper
     ? Array.from(
         contentWrapper.querySelectorAll(
-          ":scope > .home-header--title, :scope > .home-header-banner, :scope > .home-header-content"
+          ".home-header--title, .home-header-banner, .home-header-content"
         )
       )
     : [];
@@ -224,9 +234,11 @@ export function initHomeHeaderSnap(root = document) {
     gsap.killTweensOf(contentEls);
 
     if (!contentEls.length || prefersReducedMotion()) {
+      debugLog("playFadeOut early return", { contentElsLength: contentEls.length, reducedMotion: prefersReducedMotion() });
       onComplete?.();
       return;
     }
+    debugLog("playFadeOut running", { contentElsLength: contentEls.length });
 
     transitionTween = gsap.to(contentEls, {
       y: -CONTENT_TRANSLATE_Y,
@@ -322,6 +334,7 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   function scrollToBottom() {
+    debugLog("scrollToBottom called", { shapeEl: !!shapeEl, contentElsLength: contentEls.length });
     locked = true;
     activeSide = "next";
     acquireScrollLock(OWNER_ID);
@@ -403,16 +416,36 @@ export function initHomeHeaderSnap(root = document) {
     }
 
     if (e.deltaY > 0) {
-      if (isScrollLocked(OWNER_ID)) return;
-      if (activeSide !== "home") return;
-      if (!isAtHomeHeaderTop()) return;
+      if (isScrollLocked(OWNER_ID)) {
+        debugLog("onWheel down blocked: isScrollLocked");
+        return;
+      }
+      if (activeSide !== "home") {
+        debugLog("onWheel down blocked: activeSide !== home", { activeSide });
+        return;
+      }
+      if (!isAtHomeHeaderTop()) {
+        debugLog("onWheel down blocked: not at top", { scrollY: window.scrollY });
+        return;
+      }
+      debugLog("onWheel down -> scrollToBottom");
       e.preventDefault();
       e.stopImmediatePropagation();
       scrollToBottom();
     } else if (e.deltaY < 0) {
-      if (isScrollLocked(OWNER_ID)) return;
-      if (activeSide !== "next") return;
-      if (!isAtHomeHeaderBottomBoundary(e.deltaY)) return;
+      if (isScrollLocked(OWNER_ID)) {
+        debugLog("onWheel up blocked: isScrollLocked");
+        return;
+      }
+      if (activeSide !== "next") {
+        debugLog("onWheel up blocked: activeSide !== next", { activeSide });
+        return;
+      }
+      if (!isAtHomeHeaderBottomBoundary(e.deltaY)) {
+        debugLog("onWheel up blocked: not at bottom boundary");
+        return;
+      }
+      debugLog("onWheel up -> scrollToTop");
       e.preventDefault();
       e.stopImmediatePropagation();
       scrollToTop();
@@ -519,6 +552,7 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   function setPinMode(isMobile) {
+    debugLog("setPinMode", { isMobile, hadPinTrigger: !!pinTrigger, activeSide, locked, scrollY: window.scrollY });
     if (isMobile) {
       if (pinTrigger) {
         pinTrigger.kill();
@@ -526,10 +560,18 @@ export function initHomeHeaderSnap(root = document) {
       }
       resetToClassicMobileState();
     } else {
+      // Resynchronise activeSide avec la position réelle du scroll : après
+      // un passage en mobile (sans pin/snap, activeSide n'a plus aucun
+      // effet là-bas), la valeur reste figée sur son dernier état desktop.
+      // Sans ça, si on revient en desktop scrollé au-delà du header, le
+      // wheel-handler reste bloqué sur une condition qui ne matche jamais
+      // et l'animation (shape + fade du contenu) ne se déclenche plus.
+      activeSide = window.scrollY <= section.offsetHeight + BOUNDARY_TOLERANCE ? "home" : "next";
       applyDesktopShapeBase();
       if (!pinTrigger) {
         pinTrigger = createHomeHeaderPin(section);
       }
+      debugLog("setPinMode -> desktop done", { activeSide, hasPinTrigger: !!pinTrigger });
     }
   }
 

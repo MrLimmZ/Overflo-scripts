@@ -1,4 +1,5 @@
 .explain-step-banner video {
+  width: 100%;
   border-radius: var(--_spacing---space-6);
 }
 
@@ -57,7 +58,7 @@
   }
 }
 
-@media screen and (min-width: 767px) {
+@media screen and (min-width: 993px) {
   .explain {
     position: relative;
     height: 100svh;
@@ -72,7 +73,6 @@
   }
 
   .explain-step-banner video {
-    width: 100%;
     border-radius: none;
   }
 
