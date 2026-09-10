@@ -3,11 +3,12 @@
 import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-preference.js";
 import { getControllerForElement } from "./decorative-videos.js";
 
+const START_DELAY = 0.5; // délai avant que l'animation ne démarre
 const ENTER_OFFSET = 40;
-const STAGE_DELAY = 0.12;
-const INNER_STAGGER = 0.05;
+const STAGE_DELAY = 0.45;
+const INNER_STAGGER = 0.2;
 
-const ITEM_DURATION = 0.7;
+const ITEM_DURATION = 1.1;
 const ITEM_EASE = "power3.out";
 
 const VIDEO_TRIGGER_OFFSET = 0.15;
@@ -63,7 +64,7 @@ export function initProductHeaderReveal(root = document) {
   }
 
   function playReveal() {
-    const tl = gsap.timeline();
+    const tl = gsap.timeline({ delay: START_DELAY });
 
     const basePositions = [];
     orderedGroups.forEach((group, stageIndex) => {

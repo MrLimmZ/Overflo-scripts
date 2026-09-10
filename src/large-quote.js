@@ -5,6 +5,39 @@ import { prefersReducedMotion, onMotionPreferenceChange } from "./utils/motion-p
 const MOBILE_BREAKPOINT = 767;
 const MOBILE_SMOOTH_EASE = 0.15;
 
+// Distance de scroll (pin desktop) allouée à chaque ligne, exprimée en
+// multiple de la hauteur du viewport.
+//
+// Avant : distance = total * innerHeight * 0.8 → strictement linéaire au
+// nombre de lignes. Une citation 2x plus longue prenait 2x plus de scroll,
+// ce qui donnait l'impression d'un rythme "trop lent" sur les longues
+// citations alors que le rythme PAR LIGNE était identique.
+//
+// Maintenant : le vh/ligne reste à BASE_LINE_DISTANCE_VH tant qu'on est
+// sous REFERENCE_LINE_COUNT lignes (le rythme des citations courtes ne
+// change pas), puis décroît en sqrt(n) au-delà — la distance totale
+// grandit donc en sqrt(total) plutôt qu'en total, avec un plancher pour
+// ne jamais devenir illisible.
+const BASE_LINE_DISTANCE_VH = 0.8;
+const REFERENCE_LINE_COUNT = 4;
+const MIN_LINE_DISTANCE_VH = 0.35;
+const TAPER_EXPONENT = 0.5; // 0.5 = décroissance en racine carrée
+
+function computeLineDistanceVh(lineCount) {
+  if (lineCount <= REFERENCE_LINE_COUNT) return BASE_LINE_DISTANCE_VH;
+  const ratio = REFERENCE_LINE_COUNT / lineCount;
+  const scaled = BASE_LINE_DISTANCE_VH * Math.pow(ratio, TAPER_EXPONENT);
+  return Math.max(MIN_LINE_DISTANCE_VH, scaled);
+}
+
+// Échappatoire manuelle : data-quote-pace="0.7" sur .large-quote pour
+// affiner un cas particulier sans toucher au calcul global. 1 = rythme par
+// défaut, <1 = plus rapide (moins de scroll), >1 = plus lent.
+function getPaceMultiplier(section) {
+  const raw = parseFloat(section.dataset.quotePace);
+  return Number.isFinite(raw) && raw > 0 ? raw : 1;
+}
+
 function splitIntoWordTokens(html) {
   const withMarkers = html.replace(/<br\s*\/?>/gi, " \n ");
   const div = document.createElement("div");
@@ -126,7 +159,11 @@ export function initLargeQuoteReveal(root = document) {
       id: "large-quote-reveal",
       trigger: section,
       start: "top top+=1",
-      end: () => "+=" + total * window.innerHeight * 0.8,
+      end: () => {
+        const lineDistanceVh = computeLineDistanceVh(total);
+        const paceMultiplier = getPaceMultiplier(section);
+        return "+=" + total * window.innerHeight * lineDistanceVh * paceMultiplier;
+      },
       pin: true,
       pinType: "transform",
       pinSpacing: true,

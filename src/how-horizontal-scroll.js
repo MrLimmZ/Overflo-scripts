@@ -9,7 +9,10 @@ const GAP_EXTRA_MIN = -18;
 const GAP_FLOOR_PX = 12;
 const GAP_SMOOTH_EASE = 0.18;
 const GAP_DECAY = 0.88;
-const PROGRESS_TO_GAP_PX = 4000;
+// Ancienne constante, dépendait implicitement du framerate d'onUpdate.
+// Remplacée par PROGRESS_VELOCITY_TO_GAP_PX (voir plus bas).
+// const PROGRESS_TO_GAP_PX = 4000;
+const PROGRESS_VELOCITY_TO_GAP_PX = 15; // valeur de départ à recalibrer visuellement
 const VELOCITY_TO_GAP_DIVISOR = 14;
 const ENTRY_HOLD_RATIO = 0.08;
 const EXIT_HOLD_RATIO = 0.08;
@@ -23,6 +26,16 @@ const TRACK_FOLLOW_RATE = 10;
 // Écart (px) en dessous duquel on considère le track "rattrapé" — sert à
 // savoir quand relâcher le scroll qu'on a gelé le temps du rattrapage.
 const CATCHUP_EPSILON_PX = 1;
+
+// Animation d'entrée d'un item dans le viewport (léger translate vers sa
+// position d'origine). Fonctionne aussi bien en mode pinné (desktop) qu'en
+// scroll natif (mobile/tablette) via IntersectionObserver.
+const ITEM_ENTRANCE_TRANSLATE_Y = 24; // px, position de départ (sous la position finale)
+const ITEM_ENTRANCE_DURATION = 0.6; // s
+const ITEM_ENTRANCE_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+const ITEM_ENTRANCE_THRESHOLD = 0.2; // fraction de l'item visible avant déclenchement
+const ITEM_ENTRANCE_ROOT_MARGIN = "0px"; // ajuster pour déclencher plus tôt/tard
+const ITEM_ENTRANCE_ONCE = false; // true = ne joue l'anim qu'une fois (jamais de sortie)
 
 // Passe à false pour couper les logs de debug du gel/relâche de scroll.
 const DEBUG_HOLD = true;
@@ -125,6 +138,83 @@ function createLenisSpeedClamp() {
   }
 
   return { apply, restore };
+}
+
+function createItemEntrance(list) {
+  if (!list) return { setup() {}, destroy() {} };
+
+  const items = Array.from(list.children);
+  if (!items.length) return { setup() {}, destroy() {} };
+
+  const reduced = prefersReducedMotion();
+  let observer = null;
+
+  // État initial : items légèrement décalés vers le bas et invisibles.
+  // En reduced-motion, on les laisse directement dans leur état final.
+  items.forEach((item) => {
+    if (reduced) {
+      item.style.transform = "";
+      item.style.opacity = "";
+      item.style.transition = "";
+      item.style.willChange = "";
+      return;
+    }
+    item.style.willChange = "transform, opacity";
+    item.style.transition = `transform ${ITEM_ENTRANCE_DURATION}s ${ITEM_ENTRANCE_EASE}, opacity ${ITEM_ENTRANCE_DURATION}s ${ITEM_ENTRANCE_EASE}`;
+    item.style.transform = `translateY(${ITEM_ENTRANCE_TRANSLATE_Y}px)`;
+    item.style.opacity = "0";
+  });
+
+  function reveal(item) {
+    item.style.transform = "translateY(0)";
+    item.style.opacity = "1";
+  }
+
+  function hide(item) {
+    item.style.transform = `translateY(${ITEM_ENTRANCE_TRANSLATE_Y}px)`;
+    item.style.opacity = "0";
+  }
+
+  // root : élément dont les bords servent de "viewport" pour la détection
+  // — section (zone visible du pin) en desktop, list (scroll natif) en mobile.
+  function setup(root) {
+    if (reduced) return;
+    if (observer) observer.disconnect();
+    observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const item = entry.target;
+          if (entry.isIntersecting) {
+            reveal(item);
+            if (ITEM_ENTRANCE_ONCE) observer.unobserve(item);
+          } else if (!ITEM_ENTRANCE_ONCE) {
+            hide(item);
+          }
+        });
+      },
+      {
+        root: root || null,
+        threshold: ITEM_ENTRANCE_THRESHOLD,
+        rootMargin: ITEM_ENTRANCE_ROOT_MARGIN,
+      }
+    );
+    items.forEach((item) => observer.observe(item));
+  }
+
+  function destroy() {
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    items.forEach((item) => {
+      item.style.willChange = "";
+      item.style.transition = "";
+      item.style.transform = "";
+      item.style.opacity = "";
+    });
+  }
+
+  return { setup, destroy };
 }
 
 function createTrackFollower(track) {
@@ -249,8 +339,12 @@ export function initHowHorizontalScroll(root = document) {
   const gapInertia = list ? createGapInertia(list) : null;
   const trackFollower = createTrackFollower(track);
   const lenisSpeedClamp = createLenisSpeedClamp();
+  let itemEntrance = null;
   let listScrollHandler = null;
   let lastProgress = 0;
+  // Horodatage du dernier onUpdate pinné, pour normaliser deltaProgress
+  // par le temps écoulé (onUpdate ne tourne pas à intervalle constant).
+  let lastProgressTime = null;
 
   const mobileMq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
 
@@ -342,6 +436,11 @@ export function initHowHorizontalScroll(root = document) {
       lastScrollTime = now;
     };
     list.addEventListener("scroll", listScrollHandler, { passive: true });
+
+    // Scroll natif : le viewport de détection est la liste elle-même
+    // (overflow-x: auto), pas la section.
+    itemEntrance = createItemEntrance(list);
+    itemEntrance.setup(list);
   }
 
   function createScrollAnimation() {
@@ -361,10 +460,19 @@ export function initHowHorizontalScroll(root = document) {
       gapInertia.refreshBaseGap();
       gapInertia.start();
       lastProgress = 0;
+      lastProgressTime = null;
     }
 
     trackFollower.jumpTo(0);
     trackFollower.start();
+
+    // Mode pinné : le viewport de détection est la section (zone visible
+    // clippée par overflow-x: hidden), pas la liste dont la largeur dépasse
+    // largement l'écran.
+    if (list) {
+      itemEntrance = createItemEntrance(list);
+      itemEntrance.setup(section);
+    }
 
     debugLog("createScrollAnimation — état Lenis à l'init", {
       hasLenis: !!window.lenis,
@@ -434,9 +542,22 @@ export function initHowHorizontalScroll(root = document) {
         }
 
         if (gapInertia) {
+          const now = performance.now();
+          const dt = lastProgressTime === null ? 0 : (now - lastProgressTime) / 1000;
+          lastProgressTime = now;
+
           const deltaProgress = eased - lastProgress;
           lastProgress = eased;
-          gapInertia.pushTarget(deltaProgress * PROGRESS_TO_GAP_PX);
+
+          // On normalise par dt pour obtenir une vraie "vitesse de progress",
+          // indépendante de la fréquence d'appel d'onUpdate (qui varie avec
+          // le scrub, le framerate, et le device) — sinon targetExtra saute
+          // d'un frame à l'autre même à vitesse de scroll physique constante,
+          // ce qui produit le tremblement observé sur desktop.
+          if (dt > 0) {
+            const progressVelocity = deltaProgress / dt;
+            gapInertia.pushTarget(progressVelocity * PROGRESS_VELOCITY_TO_GAP_PX);
+          }
         }
       },
     });
@@ -453,6 +574,10 @@ export function initHowHorizontalScroll(root = document) {
     }
     lenisSpeedClamp.restore();
     trackFollower.forceRelease();
+    if (itemEntrance) {
+      itemEntrance.destroy();
+      itemEntrance = null;
+    }
     if (shouldUseStatic()) {
       applyStaticState();
     } else {

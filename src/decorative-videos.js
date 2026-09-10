@@ -276,9 +276,13 @@ function createController(video, config, id) {
     },
     resume() {
       if (!engagedIds.has(id)) return;
-      isLooping = false;
-      video.pause();
-      video.currentTime = 0;
+
+      // Si la vidéo est déjà arrivée à sa fin (lecture unique, sans replay
+      // ni loop en cours), on ne relance rien : un simple changement
+      // d'onglet ne doit pas remettre la vidéo à zéro.
+      if (video.ended && !config.replay && !isLooping) return;
+
+      isLooping = isLooping && (config.loopStart != null || config.loopEnd != null);
       doTrigger();
     },
   };
