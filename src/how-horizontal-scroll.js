@@ -403,6 +403,7 @@ export function initHowHorizontalScroll(root = document) {
     section.removeAttribute("aria-label");
 
     if (!list) return;
+    
     list.style.overflowX = "auto";
     list.style.webkitOverflowScrolling = "touch";
     list.style.width = "";
@@ -412,6 +413,29 @@ export function initHowHorizontalScroll(root = document) {
 
     detachListScrollHandler();
 
+    // ✅ Sur mobile/tablette, scroll natif pur - ZÉRO animation
+    if (mobileMq.matches) {
+      debugLog("applyStaticState — mobile mode: scroll natif uniquement");
+      // Nettoyer les animations si présentes
+      if (gapInertia) {
+        gapInertia.stop();
+      }
+      if (itemEntrance) {
+        itemEntrance.destroy();
+        itemEntrance = null;
+      }
+      // Reset complet des items à leur état normal
+      const items = Array.from(list.children);
+      items.forEach((item) => {
+        item.style.willChange = "";
+        item.style.transition = "";
+        item.style.transform = "";
+        item.style.opacity = "";
+      });
+      return;
+    }
+
+    // Sur desktop avec reduced-motion, garder gap/entrance mais pas de pin
     if (!gapInertia) return;
 
     if (prefersReducedMotion()) {

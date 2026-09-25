@@ -576,11 +576,46 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   function playLoadEntrance() {
-    if (!contentEls.length || prefersReducedMotion()) return;
+    debugLog("playLoadEntrance called", { 
+      contentElsLength: contentEls.length, 
+      reducedMotion: prefersReducedMotion(),
+      isMobile: mobileMq.matches
+    });
+    
+    if (!contentEls.length || prefersReducedMotion()) {
+      debugLog("playLoadEntrance early return");
+      return;
+    }
+    
+    const isMobile = mobileMq.matches;
+    
+    // Plus long, plus de stagger pour être visuellement fluide sur mobile
+    const duration = isMobile ? 0.8 : 1;
+    const stagger = isMobile ? 0.15 : 0;  // Augmenté pour voir la progression
+    const delay = isMobile ? 0 : 0;       // Pas de delay, démarre direct
+    const translateY = isMobile ? 30 : 60; // Mouvement un peu moins agressif
+    
+    debugLog("playLoadEntrance config", { duration, stagger, delay, translateY, isMobile });
+    
+    // Ajouter will-change pour optimiser les perfs d'animation
+    gsap.set(contentEls, { willChange: "transform, opacity" });
+    
     gsap.fromTo(
       contentEls,
-      { y: 60, opacity: 0 },
-      { y: 0, opacity: 1, duration: 1, ease: CONTENT_EASE }
+      { y: translateY, opacity: 0 },
+      {
+        y: 0,
+        opacity: 1,
+        duration,
+        ease: isMobile ? "power1.inOut" : CONTENT_EASE,  // ease plus légère
+        stagger: stagger,
+        delay,
+        onComplete: () => {
+          debugLog("playLoadEntrance animation complete");
+          // Nettoyer will-change après l'animation
+          gsap.set(contentEls, { willChange: "auto" });
+        }
+      }
     );
   }
 

@@ -9,22 +9,15 @@ import { applyStarRatings } from "./utils/star-rating.js";
 
 const MOBILE_BREAKPOINT = 767;
 
-// --- Réglages de l'arrivée des cartes ---
-
 const DESKTOP_SCALE = 1;
-const MOBILE_SCALE = 0.6;
+const MOBILE_SCALE = 0.52;
 
-const FINAL_ROTATE_RANGE = 32;
+const FINAL_ROTATE_RANGE = 22;
 const MIN_ROTATE_ABS = 6;
 
-const EXCLUSION_MARGIN = 32;
-const EDGE_MARGIN = 16;
+const DESKTOP_EXCLUSION_MARGIN = 32;
 const CARD_GAP = 24;
-
-const OFFSCREEN_ALLOWANCE = 0.5;
-
-const MAX_PLACEMENT_ATTEMPTS = 40;
-const MAX_RESOLVE_ITERATIONS = 40;
+const OFFSCREEN_ALLOWANCE = 0.33; // Coupée au tiers (1/3) au maximum
 
 const ENTRY_DURATION = 1;
 const ENTRY_STAGGER = 0.08;
@@ -60,7 +53,6 @@ function shuffle(array) {
 
 function pickDispersedRotations(total, range) {
   if (total <= 0) return [];
-
   let negCount = Math.floor(total / 2);
   let posCount = total - negCount;
   if (total % 2 === 1 && Math.random() < 0.5) {
@@ -81,8 +73,7 @@ function pickDispersedRotations(total, range) {
     return values;
   }
 
-  const rotations = [...bucketsFor(negCount, -1), ...bucketsFor(posCount, 1)];
-  return shuffle(rotations);
+  return shuffle([...bucketsFor(negCount, -1), ...bucketsFor(posCount, 1)]);
 }
 
 function assignQuadrants(total) {
@@ -167,89 +158,8 @@ function sampleSafeInRange(xRange, yRange, exclusion, cardHalfW, cardHalfH) {
   };
 }
 
-function subRange(a, b, t0, t1) {
-  const p0 = a + t0 * (b - a);
-  const p1 = a + t1 * (b - a);
-  return [Math.min(p0, p1), Math.max(p0, p1)];
-}
-
-function pushOutOfExclusion(x, y, cardHalfW, cardHalfH, exclusion, hardXRange, hardYRange) {
-  if (!exclusion) return { x, y };
-
-  const overlapX = cardHalfW + exclusion.halfW - Math.abs(x - exclusion.x);
-  const overlapY = cardHalfH + exclusion.halfH - Math.abs(y - exclusion.y);
-  if (overlapX <= 0 || overlapY <= 0) return { x, y };
-
-  if (overlapX <= overlapY) {
-    x += x >= exclusion.x ? overlapX : -overlapX;
-  } else {
-    y += y >= exclusion.y ? overlapY : -overlapY;
-  }
-
-  x = clamp(x, hardXRange[0], hardXRange[1]);
-  y = clamp(y, hardYRange[0], hardYRange[1]);
-
-  return { x, y };
-}
-
-function resolveOverlaps({
-  x,
-  y,
-  cardHalfW,
-  cardHalfH,
-  gapHalfW,
-  gapHalfH,
-  placed,
-  exclusion,
-  hardXRange,
-  hardYRange,
-}) {
-  for (let iter = 0; iter < MAX_RESOLVE_ITERATIONS; iter++) {
-    let moved = false;
-
-    if (exclusion) {
-      const overlapX = cardHalfW + exclusion.halfW - Math.abs(x - exclusion.x);
-      const overlapY = cardHalfH + exclusion.halfH - Math.abs(y - exclusion.y);
-      if (overlapX > 0 && overlapY > 0) {
-        moved = true;
-        if (overlapX < overlapY) {
-          x += x >= exclusion.x ? overlapX : -overlapX;
-        } else {
-          y += y >= exclusion.y ? overlapY : -overlapY;
-        }
-      }
-    }
-
-    for (const p of placed) {
-      const overlapX = gapHalfW + p.halfW - Math.abs(x - p.x);
-      const overlapY = gapHalfH + p.halfH - Math.abs(y - p.y);
-      if (overlapX > 0 && overlapY > 0) {
-        moved = true;
-        if (overlapX < overlapY) {
-          x += x >= p.x ? overlapX : -overlapX;
-        } else {
-          y += y >= p.y ? overlapY : -overlapY;
-        }
-      }
-    }
-
-    x = clamp(x, hardXRange[0], hardXRange[1]);
-    y = clamp(y, hardYRange[0], hardYRange[1]);
-
-    if (!moved) break;
-  }
-
-  return { x, y };
-}
-
-function computeCardTargets(
-  section,
-  header,
-  items,
-  scale,
-  rotations,
-  quadrantsOverride,
-) {
+// Calcul Desktop
+function computeDesktopCardTargets(section, header, items, scale, rotations, quadrants) {
   const sectionRect = section.getBoundingClientRect();
   const centerX = sectionRect.left + sectionRect.width / 2;
   const centerY = sectionRect.top + sectionRect.height / 2;
@@ -262,37 +172,10 @@ function computeCardTargets(
     exclusion = {
       x: headerRect.left + headerRect.width / 2 - centerX,
       y: headerRect.top + headerRect.height / 2 - centerY,
-      halfW: headerRect.width / 2 + EXCLUSION_MARGIN,
-      halfH: headerRect.height / 2 + EXCLUSION_MARGIN,
+      halfW: headerRect.width / 2 + DESKTOP_EXCLUSION_MARGIN,
+      halfH: headerRect.height / 2 + DESKTOP_EXCLUSION_MARGIN,
     };
   }
-
-  const quadrants = quadrantsOverride || assignQuadrants(items.length);
-
-  const groupsByQuadrant = new Map();
-  quadrants.forEach((q, index) => {
-    const key = `${q.sx},${q.sy}`;
-    if (!groupsByQuadrant.has(key)) groupsByQuadrant.set(key, []);
-    groupsByQuadrant.get(key).push(index);
-  });
-
-  const cellByIndex = new Map();
-  groupsByQuadrant.forEach((indices) => {
-    const n = indices.length;
-    const cols = Math.ceil(Math.sqrt(n));
-    const rows = Math.ceil(n / cols);
-    const cells = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        cells.push({ col: c, row: r });
-      }
-    }
-    const shuffledCells = shuffle(cells).slice(0, n);
-    const shuffledIndices = shuffle(indices);
-    shuffledIndices.forEach((itemIndex, i) => {
-      cellByIndex.set(itemIndex, { ...shuffledCells[i], cols, rows });
-    });
-  });
 
   const placed = [];
   const targets = [];
@@ -310,16 +193,9 @@ function computeCardTargets(
     const gapHalfW = cardHalfW + CARD_GAP / 2;
     const gapHalfH = cardHalfH + CARD_GAP / 2;
 
-    // Autorise la carte à dépasser légèrement du cadre de la section
-    // (coupée par l'overflow:hidden), jusqu'à OFFSCREEN_ALLOWANCE.
-    const maxX = Math.max(
-      0,
-      halfW - EDGE_MARGIN - cardHalfW * (1 - OFFSCREEN_ALLOWANCE),
-    );
-    const maxY = Math.max(
-      0,
-      halfH - EDGE_MARGIN - cardHalfH * (1 - OFFSCREEN_ALLOWANCE),
-    );
+    // Débordement max au 1/3 (OFFSCREEN_ALLOWANCE = 0.33)
+    const maxX = Math.max(0, halfW - cardHalfW * (1 - 2 * OFFSCREEN_ALLOWANCE));
+    const maxY = Math.max(0, halfH - cardHalfH * (1 - 2 * OFFSCREEN_ALLOWANCE));
 
     const hardXRange = [-maxX, maxX];
     const hardYRange = [-maxY, maxY];
@@ -327,66 +203,27 @@ function computeCardTargets(
     const xRangeFull = quadrant.sx < 0 ? [-maxX, 0] : [0, maxX];
     const yRangeFull = quadrant.sy < 0 ? [-maxY, 0] : [0, maxY];
 
-    const cell = cellByIndex.get(index);
-    const xCellRange = subRange(
-      xRangeFull[0],
-      xRangeFull[1],
-      cell.col / cell.cols,
-      (cell.col + 1) / cell.cols,
-    );
-    const yCellRange = subRange(
-      yRangeFull[0],
-      yRangeFull[1],
-      cell.row / cell.rows,
-      (cell.row + 1) / cell.rows,
-    );
-
     let bestX = 0;
     let bestY = 0;
     let bestScore = Infinity;
-    let found = false;
 
-    for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
-      let sample =
-        sampleSafeInRange(xCellRange, yCellRange, exclusion, cardHalfW, cardHalfH) ||
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const sample =
         sampleSafeInRange(xRangeFull, yRangeFull, exclusion, cardHalfW, cardHalfH) ||
-        sampleSafeInRange(hardXRange, hardYRange, exclusion, cardHalfW, cardHalfH);
-
-      let overlapsHeader = false;
-      if (!sample) {
-        sample = {
-          x: randomBetween(hardXRange[0], hardXRange[1]),
-          y: randomBetween(hardYRange[0], hardYRange[1]),
-        };
-        overlapsHeader =
-          !!exclusion &&
-          rectsOverlap(
-            sample.x,
-            sample.y,
-            cardHalfW,
-            cardHalfH,
-            exclusion.x,
-            exclusion.y,
-            exclusion.halfW,
-            exclusion.halfH,
-          );
-      }
+        sampleSafeInRange(hardXRange, hardYRange, exclusion, cardHalfW, cardHalfH) ||
+        { x: randomBetween(hardXRange[0], hardXRange[1]), y: randomBetween(hardYRange[0], hardYRange[1]) };
 
       const { x, y } = sample;
-
-      const overlapsCard = placed.some((p) =>
-        rectsOverlap(x, y, gapHalfW, gapHalfH, p.x, p.y, p.halfW, p.halfH),
-      );
+      const overlapsHeader = exclusion && rectsOverlap(x, y, cardHalfW, cardHalfH, exclusion.x, exclusion.y, exclusion.halfW, exclusion.halfH);
+      const overlapsCard = placed.some((p) => rectsOverlap(x, y, gapHalfW, gapHalfH, p.x, p.y, p.halfW, p.halfH));
 
       if (!overlapsHeader && !overlapsCard) {
         bestX = x;
         bestY = y;
-        found = true;
         break;
       }
 
-      const cardOverlap = totalOverlap(x, y, gapHalfW, gapHalfH, placed);
-      const score = cardOverlap + (overlapsHeader ? 1e9 : 0);
+      const score = totalOverlap(x, y, gapHalfW, gapHalfH, placed) + (overlapsHeader ? 1e9 : 0);
       if (score < bestScore) {
         bestScore = score;
         bestX = x;
@@ -394,40 +231,103 @@ function computeCardTargets(
       }
     }
 
-    if (!found) {
-      const resolved = resolveOverlaps({
-        x: bestX,
-        y: bestY,
-        cardHalfW,
-        cardHalfH,
-        gapHalfW,
-        gapHalfH,
-        placed,
-        exclusion,
-        hardXRange,
-        hardYRange,
-      });
-      bestX = resolved.x;
-      bestY = resolved.y;
-    }
-    
-    const pushed = pushOutOfExclusion(
-      bestX,
-      bestY,
-      cardHalfW,
-      cardHalfH,
-      exclusion,
-      hardXRange,
-      hardYRange,
-    );
-    bestX = pushed.x;
-    bestY = pushed.y;
-
     placed.push({ x: bestX, y: bestY, halfW: gapHalfW, halfH: gapHalfH });
     targets.push({ x: bestX, y: bestY, rotate });
   });
 
   return targets;
+}
+
+// Calcul Mobile avec limitation stricte du débordement à 1/3
+function computeMobileCardTargets(section, header, items, scale, rotations) {
+  const sectionRect = section.getBoundingClientRect();
+  const list = section.querySelector(".why-list");
+  const listRect = list ? list.getBoundingClientRect() : sectionRect;
+  const headerRect = header.getBoundingClientRect();
+
+  // Origine (0, 0) relative à .why-list
+  const listCenterY = listRect.top + listRect.height / 2;
+
+  // Limites écran du header rapportées à l'origine
+  const headerTopFromOrigin = headerRect.top - listCenterY;
+  const headerBottomFromOrigin = headerRect.bottom - listCenterY;
+
+  // Limites section rapportées à l'origine
+  const sectionTopFromOrigin = sectionRect.top - listCenterY;
+  const sectionBottomFromOrigin = sectionRect.bottom - listCenterY;
+
+  // Dimensions brutes de la carte (avant scale)
+  const rawHalfH = (items[0]?.offsetHeight || 265) / 2;
+  const rawHalfW = (items[0]?.offsetWidth || 196) / 2;
+  const renderedHalfH = rawHalfH * scale;
+  const renderedHalfW = rawHalfW * scale;
+
+  // Coupure max au 1/3 : le centre de la carte ne peut pas dépasser les bords de la section de plus de (2/3 * renderedHalf)
+  const maxCutH = renderedHalfH * (2 * OFFSCREEN_ALLOWANCE); // = 0.66 * renderedHalfH
+  const minTopScreen = sectionTopFromOrigin + renderedHalfH - maxCutH;
+  const maxBottomScreen = sectionBottomFromOrigin - renderedHalfH + maxCutH;
+
+  // Limites d'évitement du header (au moins 16px d'écart)
+  const maxAboveHeaderScreen = headerTopFromOrigin - renderedHalfH - 16;
+  const minBelowHeaderScreen = headerBottomFromOrigin + renderedHalfH + 16;
+
+  // Conversion en coordonnées relatives au scale
+  const yUpperLimit = Math.min(maxAboveHeaderScreen, maxAboveHeaderScreen) / scale;
+  const yUpperMin = minTopScreen / scale;
+
+  const yLowerLimit = minBelowHeaderScreen / scale;
+  const yLowerMax = maxBottomScreen / scale;
+
+  // Débordement latéral max au 1/3 (OFFSCREEN_ALLOWANCE = 0.33)
+  const maxCutW = renderedHalfW * (2 * OFFSCREEN_ALLOWANCE);
+  const maxHorizontalScreen = (sectionRect.width / 2) - renderedHalfW + maxCutW;
+  const xLimit = maxHorizontalScreen / scale;
+
+  // 5 emplacements organisés (3 en haut, 2 en bas)
+  const slots = [
+    // 0: Haut gauche
+    {
+      x: -xLimit * 0.75,
+      y: clamp(yUpperLimit - 15 / scale, yUpperMin, yUpperLimit),
+    },
+    // 1: Haut droite
+    {
+      x: xLimit * 0.72,
+      y: clamp(yUpperLimit, yUpperMin, yUpperLimit),
+    },
+    // 2: Haut fond (peut couper le bord supérieur jusqu'au tiers)
+    {
+      x: 0,
+      y: clamp(yUpperLimit - 60 / scale, yUpperMin, yUpperLimit - 25 / scale),
+    },
+    // 3: Bas gauche
+    {
+      x: -xLimit * 0.72,
+      y: clamp(yLowerLimit + 10 / scale, yLowerLimit, yLowerMax),
+    },
+    // 4: Bas droite (peut couper le bord inférieur jusqu'au tiers)
+    {
+      x: xLimit * 0.75,
+      y: clamp(yLowerLimit + 55 / scale, yLowerLimit, yLowerMax),
+    },
+  ];
+
+  return Array.from(items).map((_, index) => {
+    const slot = slots[index % slots.length];
+    return {
+      x: clamp(slot.x + randomBetween(-8, 8), -xLimit, xLimit),
+      y: slot.y,
+      rotate: rotations[index],
+    };
+  });
+}
+
+function computeCardTargets(section, header, items, scale, rotations, quadrants) {
+  const isMobile = window.innerWidth <= MOBILE_BREAKPOINT;
+  if (isMobile && header) {
+    return computeMobileCardTargets(section, header, items, scale, rotations);
+  }
+  return computeDesktopCardTargets(section, header, items, scale, rotations, quadrants);
 }
 
 export function initWhyCardsConverge(root = document) {
@@ -443,7 +343,6 @@ export function initWhyCardsConverge(root = document) {
   applyStarRatings(items);
 
   const header = section.querySelector(".why-header");
-
   const starIcons = Array.from(items).map((item) =>
     Array.from(item.querySelectorAll(".stars-list > .icon-xs")),
   );
@@ -568,7 +467,7 @@ export function initWhyCardsConverge(root = document) {
 
   function repositionCards() {
     if (!lastRotations || !lastQuadrants) return;
-    if (arrivalTimeline) return;
+    if (arrivalTimeline && arrivalTimeline.isActive()) return;
     const targets = computeCardTargets(
       section,
       header,

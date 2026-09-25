@@ -1,5 +1,3 @@
-// src/barba.js
-
 import { initNav } from "./nav.js";
 import { initNavTheme } from "./nav-theme.js";
 import { initCtaParallax } from "./cta-parallax.js";
@@ -183,16 +181,26 @@ function initBarba() {
   });
 
   barba.hooks.beforeEnter((data) => {
+    console.log("[Barba] beforeEnter hook");
     if (window.lenis) {
       window.lenis.scrollTo(0, { immediate: true });
     } else {
       window.scrollTo(0, 0);
     }
     reinitWebflowIX2();
+    
+    // ✅ Reset le flag pour que initProductHeaderReveal se réinitialise
+    const section = data.next.container.querySelector(".product-header");
+    if (section) {
+      console.log("[Barba] Resetting product-header flag");
+      delete section.dataset.headerRevealInit;
+    }
+    
     reinitModules(data.next.container);
   });
 
   barba.hooks.after((data) => {
+    console.log("[Barba] after hook");
     recalcScrollDimensions();
     scrollToFilteredSectionIfNeeded(data.next.container);
   });
