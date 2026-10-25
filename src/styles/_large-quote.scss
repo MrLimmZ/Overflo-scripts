@@ -7,6 +7,15 @@
   position: relative;
 }
 
+/* Mobile : citation plus petite pour tenir sur 3 lignes pleines au lieu de
+   5 lignes inégales (retour client 067). Le découpage en lignes du script
+   se recalcule d'après cette taille. */
+@media screen and (max-width: 767px) {
+  .large-quote-text {
+    font-size: clamp(26px, 8.4vw, 38px);
+  }
+}
+
 .large-quote-text-base {
   opacity: 0.35;
 }

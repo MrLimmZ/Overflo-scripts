@@ -12,3 +12,12 @@
     will-change: transform, opacity;
   }
 }
+
+/* Mobile : « Investments that work quietly in the background » sur 2 lignes
+   équilibrées au lieu de 3 (retour client 064). */
+@media screen and (max-width: 767px) {
+  .zoom h2.heading-4 {
+    font-size: clamp(24px, 7.2vw, 34px);
+    text-wrap: balance;
+  }
+}

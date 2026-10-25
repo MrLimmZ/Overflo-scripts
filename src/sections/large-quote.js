@@ -224,5 +224,28 @@ export function initLargeQuoteReveal(root = document) {
     setup();
   });
 
+  // … et de la taille de police : main.css ou la police web peuvent arriver
+  // après ce premier découpage (sinon les lignes restent calculées sur
+  // l'ancienne taille). On ne redécoupe que si la taille a vraiment changé.
+  const layoutKey = () => `${getComputedStyle(textEl).fontSize}|${textEl.clientWidth}`;
+  let lastLayoutKey = layoutKey();
+  let observer = null;
+  function rebuildIfFontChanged() {
+    if (!section.isConnected) {
+      observer?.disconnect();
+      return;
+    }
+    const key = layoutKey();
+    if (key === lastLayoutKey) return;
+    lastLayoutKey = key;
+    rebuildLines();
+    setup();
+  }
+  if ("ResizeObserver" in window) {
+    observer = new ResizeObserver(rebuildIfFontChanged);
+    observer.observe(textEl);
+  }
+  document.fonts?.ready.then(rebuildIfFontChanged);
+
   return st;
 }

@@ -18,6 +18,36 @@
   .how-list {
     flex-shrink: 0;
   }
+
+  /* Les cartes remplissent la hauteur de la section épinglée (100vh) au lieu
+     de garder 553 px fixes, ce qui laissait de grandes bandes vides en haut et
+     en bas. La proportion d'origine (396 × 553) est gardée pour ne pas rogner
+     davantage les écrans ; plafond pour les très grands écrans. */
+  .how-track {
+    align-self: stretch;
+  }
+
+  .how-list {
+    align-items: center;
+  }
+
+  // Élément de liste CMS entre .how-list et .how-card.
+  .how-list > * {
+    display: flex;
+    align-items: center;
+    height: 100%;
+  }
+
+  // Jamais plus petite qu'avant (553 px) : sur un écran bas, la carte déborde
+  // un peu dans la marge, de façon égale en haut et en bas.
+  .how-card {
+    flex: none;
+    width: auto;
+    height: 100%;
+    min-height: 553px;
+    max-height: 760px;
+    aspect-ratio: 396 / 553;
+  }
 }
 
 @media screen and (max-width: 767px) {
@@ -34,5 +64,13 @@
 
   .how-list > * {
     scroll-snap-align: start;
+  }
+
+  /* Même hauteur d'image pour toutes les cartes : sinon une carte au
+     sous-titre d'une seule ligne a une image plus haute et un titre plus bas
+     que les autres (retour client 077). */
+  .how-card-banner {
+    flex: none;
+    aspect-ratio: 264 / 317;
   }
 }

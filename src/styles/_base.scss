@@ -18,6 +18,31 @@ img {
   -webkit-user-drag: none;
 }
 
+/* Badges App Store / Google Play : même taille dans tous les navigateurs.
+   La hauteur vient de Webflow ; la largeur suit la proportion des images
+   (283 × 96) au lieu de dépendre d'un height: 100% dans un flex, que Safari
+   et Firefox ne calculent pas comme Chrome. */
+a.store-link {
+  flex: none;
+  width: auto;
+  aspect-ratio: 283 / 96;
+}
+
+.store-link img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: contain;
+}
+
+/* Product, « Built around your investing journey » : les écrans (images
+   carrées) sont recadrés depuis le haut pour garder le haut de l'écran, ses
+   coins arrondis et les options court / moyen / long terme (retours 024, 078, 079). */
+.trio img.reinsurance-card--banner {
+  object-position: 50% 0%;
+}
+
 @media screen and (min-width: 768px) {
   html[data-scrollbar-false] {
     scrollbar-width: none;
