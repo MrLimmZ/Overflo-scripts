@@ -1,111 +1,112 @@
-# Overflo — Development Environment
+# Overflo — scripts et styles du site Webflow
 
-Build environment for the Overflo website (Webflow), powered by **esbuild**.
-A single tool handles the entire pipeline: JavaScript module bundling,
-CSS compilation and minification, local development server, and production
-builds.
+Le JavaScript et le CSS du site Overflo (Webflow), bundlés par **esbuild**.
+Le build produit deux fichiers à la racine, `main.js` et `main.css`, servis
+au site par jsDelivr depuis ce dépôt GitHub.
 
-## Table of Contents
+## Sommaire
 
-- [Project Structure](#project-structure)
-- [Requirements](#requirements)
-- [Commands](#commands)
-- [Local Development](#local-development)
-- [Testing on Staging](#testing-on-staging)
-- [Production Deployment](#production-deployment)
-- [Webflow Configuration](#webflow-configuration)
+- [Structure](#structure)
+- [Commandes](#commandes)
+- [Développement local](#développement-local)
+- [Mise en production](#mise-en-production)
+- [Configuration Webflow](#configuration-webflow)
+- [Ajouter une fonctionnalité](#ajouter-une-fonctionnalité)
 
-## Project Structure
+## Structure
 
 ```
 Overflo/
 ├── src/
-│   ├── index.js                    JavaScript entry point
-│   ├── core.js                     Global initialization (Lenis, ScrollTrigger…)
-│   ├── barba.js                    Page transitions and module re-initialization
-│   ├── nav.js                      Example functional module
-│   ├── utils/
-│   │   └── motion-preference.js    prefers-reduced-motion detection
-│   └── styles/
-│       └── main.css                CSS entry point
-├── build.js                        esbuild script (dev server / watch / build)
-├── purge.js                        jsDelivr cache purge after deployment
-├── package.json
-└── main.js, main.css               Generated files (build output)
+│   ├── index.js            Point d'entrée : Lenis, accordéons, Barba
+│   ├── core/               Démarrage du site
+│   │   ├── lenis.js            Smooth scroll (desktop) relié à ScrollTrigger
+│   │   ├── page-transitions.js Barba + (ré)initialisation à chaque page
+│   │   ├── modules.js          Liste ordonnée des modules lancés sur chaque page
+│   │   └── webflow.js          File d'attente Webflow, relance des interactions
+│   ├── components/         Éléments d'interface (nav, boutons, accordéons,
+│   │                       select, carrousels, vidéos décoratives…)
+│   ├── content/            Contenu CMS : blocs [table] [steps], titres,
+│   │                       sommaire d'article, filtre du blog, aide
+│   ├── animations/         Animations simples (fondus au scroll, parallaxes,
+│   │                       en-tête produit, étoiles…)
+│   ├── sections/           Grandes sections animées et épinglées au scroll
+│   │                       (home header, explain, how, what, zoom, why, quote)
+│   ├── embeds/             Blocs data-embed="…" (tilt-stack, carousel-loop)
+│   ├── schema/             Données structurées schema.org (SEO)
+│   ├── utils/              Fonctions partagées (breakpoints, motion, math…)
+│   └── styles/             SCSS (main.scss importe les partiels)
+├── scripts/
+│   ├── build.js            Build / serveur de dev esbuild
+│   ├── dev-proxy.js        Proxy pour le tunnel Cloudflare
+│   └── purge.js            Purge du cache jsDelivr après déploiement
+├── docs/
+│   ├── CMS.md              Blocs personnalisés dans le rich text du CMS
+│   └── VIDEO.md            Vidéos décoratives (attributs data-video-*)
+└── main.js, main.css       Fichiers générés (ne pas modifier à la main)
 ```
 
-Each new feature corresponds to a file in `src/` (e.g. `lightbox.js`,
-`quickview.js`), imported into `src/index.js`. If the module needs to be
-re-initialized after a Barba.js page transition, it must also be added to
-`reinitModules()` (`src/barba.js`).
+Chaque module exporte une fonction `initXxx(root)` qui reçoit la page
+courante et ne fait rien si sa section n'est pas présente. `core/modules.js`
+les appelle toutes, dans l'ordre, au premier chargement puis après chaque
+transition Barba.
 
-The project uses standard ES modules (`import` / `export`); esbuild handles
-the bundling.
+## Commandes
 
-## Requirements
+| Commande         | Rôle                                                        |
+|------------------|-------------------------------------------------------------|
+| `npm install`    | Installe les dépendances                                    |
+| `npm run dev`    | Serveur local + rebuild automatique + proxy + tunnel        |
+| `npm run build`  | Build de production minifié (`main.js`, `main.css`)         |
+| `npm run deploy` | Build + commit + push + purge du cache jsDelivr             |
 
-- Node.js (recent version recommended)
-- A GitHub account with write access to the `MrLimmZ/Overflo-scripts` repository
-
-## Commands
-
-| Command              | Description                                                |
-|-----------------------|--------------------------------------------------------------|
-| `npm install`          | Installs dependencies                                        |
-| `npm run dev`           | Starts the local server with automatic rebuild and CORS      |
-| `npm run build`          | Generates the minified production build (`main.js`, `main.css`) |
-| `npm run deploy`          | Build + commit + push + jsDelivr cache purge                 |
-
-## Local Development
+## Développement local
 
 ```bash
 npm run dev
 ```
 
-Serves `main.js` and `main.css` on `http://localhost:3000`, with the CORS
-headers required for Webflow to load these files from a different domain.
+Sert `main.js` et `main.css` sur `http://localhost:3000` (avec les en-têtes
+CORS nécessaires à Webflow). Chaque sauvegarde dans `src/` relance le build
+et recharge la page Webflow (dev ou staging) automatiquement, grâce à
+l'endpoint `/esbuild` d'esbuild.
 
-Automatic reload is enabled: every save in `src/` triggers an esbuild
-rebuild, and the Webflow page (dev or staging) reloads automatically, with
-no manual intervention required.
+Pour tester sur le domaine `.webflow.io`, le tunnel Cloudflare expose le
+serveur local (port 3001 via `scripts/dev-proxy.js`). Son URL doit figurer
+dans `DEV_URLS` du code personnalisé Webflow, et `FORCE_PROD` doit valoir
+`false`.
 
-This mechanism relies on esbuild's `/esbuild` endpoint (Server-Sent Events).
-The script included in `webflow-head-code.html` connects to it automatically
-when it detects a dev or staging environment, and stays inactive in
-production (no request to jsDelivr in that case).
-
-## Testing on Staging
-
-To test changes directly on the `.webflow.io` domain:
-
-```bash
-npx cloudflared tunnel --url http://localhost:3000
-```
-
-This command generates a temporary URL (`https://xxx.trycloudflare.com`),
-to be added to `DEV_URLS` (Webflow head and body code). This URL changes
-every time the tunnel is restarted, unless a named tunnel linked to a
-Cloudflare account is used.
-
-## Production Deployment
+## Mise en production
 
 ```bash
 npm run deploy
 ```
 
-This command builds, commits, and pushes the generated files to the
-`MrLimmZ/Overflo-scripts` repository, then purges the jsDelivr cache to
-force an update of the files served in production:
+Build, commit et push des fichiers générés sur `MrLimmZ/Overflo-scripts`,
+puis purge du cache jsDelivr pour que le site serve la nouvelle version :
 
 - `https://cdn.jsdelivr.net/gh/MrLimmZ/Overflo-scripts@main/main.js`
 - `https://cdn.jsdelivr.net/gh/MrLimmZ/Overflo-scripts@main/main.css`
 
-## Webflow Configuration
+La date de build s'affiche dans la console du navigateur
+(`[Overflo] main.js — build …`), pratique pour vérifier la version servie.
 
-In **Project Settings → Custom Code**:
+## Configuration Webflow
 
-- Paste the contents of `webflow-head-code.html` into **Head Code**
-- Paste the contents of `webflow-body-code.html` into **Footer Code**
+Dans **Site Settings → Custom Code**, le Head Code charge `main.css` et le
+Footer Code charge `main.js`. Les deux scripts choisissent entre la version
+locale (`DEV_URLS`) et la version jsDelivr (`PROD_URL`) ; `FORCE_PROD = true`
+force jsDelivr.
 
-During a local development session, replace `TON-TUNNEL-CLOUDFLARE` with the
-active Cloudflare tunnel URL.
+Le site doit aussi charger GSAP + ScrollTrigger, Lenis et Barba (déjà en
+place dans Webflow).
+
+## Ajouter une fonctionnalité
+
+1. Créer le fichier dans le bon dossier (ex. `src/components/lightbox.js`)
+   avec une fonction `export function initLightbox(root = document)`.
+2. L'importer dans `src/core/modules.js` et l'ajouter à `PAGE_MODULES`
+   (ou à `PINNED_SECTIONS` si la section est épinglée au scroll).
+3. Si un listener global (`window`, `matchMedia`…) est nécessaire, utiliser
+   les helpers de `src/utils/listeners.js` : ils se retirent tout seuls quand
+   Barba change de page.

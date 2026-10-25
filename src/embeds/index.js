@@ -1,4 +1,5 @@
 // src/embeds/index.js
+// Blocs interactifs placés dans Webflow avec data-embed="<type>".
 
 import { mountTiltStack } from "./tilt-stack.js";
 import { mountCarouselLoop } from "./carousel-loop.js";

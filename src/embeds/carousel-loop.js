@@ -1,6 +1,9 @@
 // src/embeds/carousel-loop.js
+// data-embed="carousel-loop" : rangées de logos qui défilent sans fin (une
+// timeline GSAP par rangée, en pause hors de l'écran).
 
-import { prefersReducedMotion, onMotionPreferenceChange } from "../utils/motion-preference.js";
+import { prefersReducedMotion, onMotionPreferenceChange } from "../utils/motion.js";
+import { waitForImages } from "../utils/dom.js";
 
 const SPEED_PX_PER_SECOND = 40;
 const ROW_OFFSET_RATIO = 0.15;
@@ -24,22 +27,6 @@ function setupRow(row, containerWidth) {
   safeSet.forEach((child) => row.appendChild(child.cloneNode(true)));
 
   return row.scrollWidth / 2;
-}
-
-function waitForImages(row) {
-  const imgs = Array.from(row.querySelectorAll("img"));
-  const pending = imgs.filter((img) => !img.complete);
-  if (!pending.length) return Promise.resolve();
-
-  return Promise.all(
-    pending.map(
-      (img) =>
-        new Promise((resolve) => {
-          img.addEventListener("load", resolve, { once: true });
-          img.addEventListener("error", resolve, { once: true });
-        })
-    )
-  );
 }
 
 export function mountCarouselLoop(container) {
@@ -105,5 +92,5 @@ export function mountCarouselLoop(container) {
         tl.play();
       }
     });
-  });
+  }, container);
 }

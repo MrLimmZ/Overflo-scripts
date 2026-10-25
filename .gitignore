@@ -1,3 +1,7 @@
 node_modules
 *.map
 src/assets
+
+# macOS
+.DS_Store
+Icon?

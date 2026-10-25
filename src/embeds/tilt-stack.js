@@ -1,7 +1,11 @@
 // src/embeds/tilt-stack.js
+// data-embed="tilt-stack" : images/vidéos empilées avec tilt 3D + parallaxe
+// qui suivent la souris, et une entrée où les calques convergent au centre.
+// data-tilt-depth / data-tilt-shadow sur un calque remplacent ses valeurs par défaut.
 
-import { prefersReducedMotion, onMotionPreferenceChange } from "../utils/motion-preference.js";
-import { getControllerForElement } from "../decorative-videos.js";
+import { prefersReducedMotion, onMotionPreferenceChange } from "../utils/motion.js";
+import { hasScrollTrigger, hasFinePointer } from "../utils/env.js";
+import { getControllerForElement } from "../components/decorative-videos.js";
 
 const TILT_STRENGTH = 8;
 const PARALLAX_STRENGTH = 10;
@@ -21,10 +25,6 @@ function readDepth(layer, index, total) {
   const explicit = parseFloat(layer.dataset.tiltDepth);
   if (!Number.isNaN(explicit)) return explicit;
   return (index + 1) / total;
-}
-
-function hasFinePointer() {
-  return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 }
 
 function applyShadow(layer, depth, tiltX = 0, tiltY = 0) {
@@ -116,7 +116,7 @@ export function mountTiltStack(container) {
   }
 
   function tick() {
-    if (!document.body.contains(container)) {
+    if (!container.isConnected) {
       if (rafId) cancelAnimationFrame(rafId);
       return;
     }
@@ -170,7 +170,7 @@ export function mountTiltStack(container) {
     });
   }
 
-  if (typeof ScrollTrigger !== "undefined") {
+  if (hasScrollTrigger()) {
     ScrollTrigger.create({
       trigger: card,
       start: "top 65%",
@@ -186,5 +186,5 @@ export function mountTiltStack(container) {
     if (reduced) {
       applyRestPose();
     }
-  });
+  }, container);
 }

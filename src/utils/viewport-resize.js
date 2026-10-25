@@ -1,13 +1,8 @@
 // src/utils/viewport-resize.js
 //
-// Point d'écoute unique et debouncé pour les changements de taille de
-// fenêtre, à utiliser à la place d'un `window.addEventListener("resize", …)`
-// individuel dans chaque module (comme le fait déjà motion-preference.js
-// pour prefers-reduced-motion). Ça évite d'empiler un listener + un
-// setTimeout de debounce différent dans chaque fichier, et ça filtre par
-// défaut les faux positifs iOS Safari (la hauteur change seule quand la
-// barre d'adresse apparaît/disparaît au scroll, sans changement de largeur
-// — un module qui ne dépend que de la largeur n'a pas à se recalculer là).
+// Un seul listener resize (debouncé) pour tout le site, au lieu d'un listener
+// + un timer par module. Par défaut, les changements de hauteur seule sont
+// ignorés (la barre d'adresse iOS Safari change la hauteur au scroll).
 
 const DEBOUNCE_MS = 150;
 
@@ -21,9 +16,13 @@ function notify() {
   const height = window.innerHeight;
   const widthChanged = width !== lastWidth;
 
-  listeners.forEach(({ callback, widthOnly }) => {
-    if (widthOnly && !widthChanged) return;
-    callback({ width, height });
+  listeners.forEach((entry) => {
+    if (entry.owner && !entry.owner.isConnected) {
+      listeners.delete(entry);
+      return;
+    }
+    if (entry.widthOnly && !widthChanged) return;
+    entry.callback({ width, height });
   });
 
   lastWidth = width;
@@ -35,18 +34,14 @@ window.addEventListener("resize", () => {
 });
 
 /**
- * S'abonne aux changements de taille de fenêtre (debounced, ~150ms).
- *
  * @param {(size: {width:number, height:number}) => void} callback
- * @param {{ widthOnly?: boolean }} [options] widthOnly (true par défaut) :
- *   n'appelle callback que si la largeur a changé, pour ignorer les resize
- *   où seule la hauteur bouge (barre d'adresse mobile). Passe false pour
- *   les modules dont la mise en page dépend aussi de la hauteur seule
- *   (ex: bandStep basé sur innerHeight).
- * @returns {() => void} fonction de désabonnement
+ * @param {{ widthOnly?: boolean, owner?: Element }} [options]
+ *   widthOnly (true par défaut) : n'appelle que si la largeur a changé.
+ *   owner : arrête d'écouter quand cet élément a quitté la page.
+ * @returns {() => void} désabonnement
  */
-export function onViewportResize(callback, { widthOnly = true } = {}) {
-  const entry = { callback, widthOnly };
+export function onViewportResize(callback, { widthOnly = true, owner = null } = {}) {
+  const entry = { callback, widthOnly, owner };
   listeners.add(entry);
   return () => listeners.delete(entry);
 }

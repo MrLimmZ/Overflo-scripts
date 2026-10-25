@@ -1,6 +1,7 @@
 // src/utils/scroll-reveal.js
 
-import { prefersReducedMotion } from "./motion-preference.js";
+import { prefersReducedMotion } from "./motion.js";
+import { hasGsap, hasScrollTrigger } from "./env.js";
 
 const ENTER_OFFSET = 28;
 const ITEM_DURATION = 0.6;
@@ -33,7 +34,7 @@ export function initFadeUpReveal(
     stagger = ITEM_STAGGER,
   }
 ) {
-  if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") return;
+  if (!hasGsap() || !hasScrollTrigger()) return;
 
   const section = sectionSelector
     ? root.querySelector(sectionSelector)
