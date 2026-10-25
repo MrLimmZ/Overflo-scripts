@@ -132,12 +132,12 @@ export function buildPartnerSchema(root) {
   return entities;
 }
 
-// --- Ressources (liste de blog) ---
+// --- Resources (liste de blog) ---
 export function buildBlogListSchema(root) {
   const blog = {
     "@type": "Blog",
     name: "Overflo Blog & Resources",
-    url: "https://www.overflo.com/ressources",
+    url: "https://www.overflo.com/resources",
   };
 
   const seenUrls = new Set();

@@ -603,6 +603,8 @@ export function initExplainSteps(root = document) {
     activeTween = gsap.timeline({
       onComplete: () => {
         activeTween = null;
+        // Changement de page pendant l'animation : ne pas scroller la nouvelle page.
+        if (cleanupIfDetached()) return;
         if (outgoingBanner) resetBannerNeutral(outgoingBanner);
         getBannerVideoController(outgoingBanner)?.pause();
         setStepStacking(nextIndex, -1);
@@ -636,6 +638,7 @@ export function initExplainSteps(root = document) {
         const queuedTarget = Math.max(minQueuedTarget, Math.min(total - 1, nextIndex + queuedDir));
 
         gsap.delayedCall(UNSTOP_DELAY, () => {
+          if (cleanupIfDetached()) return;
           if (!isReturnToVirtual) {
             lenisStart();
           }

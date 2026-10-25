@@ -30,13 +30,15 @@ export function initStoryReveal(root = document) {
       const content = contents[index];
       if (!content) return 0;
       const cardRect = card.getBoundingClientRect();
-      const contentRect = content.getBoundingClientRect();
-      const distance = cardRect.bottom - contentRect.top + CONTENT_HIDE_BUFFER;
+      // Position du texte sans son décalage actuel (il peut être caché ou en cours d'animation).
+      const contentTop = content.getBoundingClientRect().top - (gsap.getProperty(content, "y") || 0);
+      const distance = cardRect.bottom - contentTop + CONTENT_HIDE_BUFFER;
       return Math.max(distance, 0);
     });
   }
 
-  let revealed = false;
+  // Cartes dont le texte est actuellement remonté (révélé).
+  const revealed = new Set();
 
   if (prefersReducedMotion()) {
     contents.forEach((content) => {
@@ -46,10 +48,9 @@ export function initStoryReveal(root = document) {
   }
 
   function applyHiddenState() {
-    if (revealed) return;
     const offsets = computeOffsets();
     contents.forEach((content, index) => {
-      if (content) gsap.set(content, { y: offsets[index] });
+      if (content && !revealed.has(cards[index])) gsap.set(content, { y: offsets[index] });
     });
   }
 
@@ -62,26 +63,51 @@ export function initStoryReveal(root = document) {
     }
   });
 
+  function contentsOf(batch) {
+    return batch.map((card) => contents[cards.indexOf(card)]).filter(Boolean);
+  }
+
+  function reveal(batch) {
+    batch.forEach((card) => revealed.add(card));
+    gsap.to(contentsOf(batch), {
+      y: 0,
+      duration: DURATION,
+      ease: EASE,
+      stagger: STAGGER,
+      overwrite: true,
+    });
+  }
+
+  // La carte est sortie de l'écran : on recache son texte pour que l'animation
+  // se rejoue au prochain passage. `animate` quand la carte est encore visible
+  // (on remonte au-dessus du point de déclenchement).
+  function hide(batch, { animate = false } = {}) {
+    batch.forEach((card) => revealed.delete(card));
+    const offsets = computeOffsets();
+    batch.forEach((card) => {
+      const index = cards.indexOf(card);
+      const content = contents[index];
+      if (!content) return;
+      if (animate) {
+        gsap.to(content, { y: offsets[index], duration: DURATION / 2, ease: "power2.in", overwrite: true });
+      } else {
+        gsap.killTweensOf(content);
+        gsap.set(content, { y: offsets[index] });
+      }
+    });
+  }
+
   ScrollTrigger.batch(cards, {
     start: "top 65%",
-    once: true,
-    onEnter: (batch) => {
-      revealed = true;
-      const targets = batch
-        .map((card) => contents[cards.indexOf(card)])
-        .filter(Boolean);
-      gsap.to(targets, {
-        y: 0,
-        duration: DURATION,
-        ease: EASE,
-        stagger: STAGGER,
-      });
-    },
+    end: "bottom top",
+    onEnter: reveal,
+    onEnterBack: reveal,
+    onLeave: (batch) => hide(batch),
+    onLeaveBack: (batch) => hide(batch, { animate: true }),
   });
 
   let resizeTimer;
   onWindowEvent("resize", section, () => {
-    if (revealed) return;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(applyHiddenState, 150);
   });

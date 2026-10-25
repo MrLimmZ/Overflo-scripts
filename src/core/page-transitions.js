@@ -55,6 +55,16 @@ function initPage(root) {
   }
 }
 
+// Remet la nouvelle page tout en haut. Une section épinglée (home-header,
+// explain-steps) a pu mettre Lenis en pause juste avant le clic : Lenis ignore
+// alors un scrollTo, d'où le start() avant et `force`.
+function scrollToTopForNewPage() {
+  resetScrollLock();
+  window.lenis?.start();
+  window.lenis?.scrollTo(0, { immediate: true, force: true });
+  window.scrollTo(0, 0);
+}
+
 // Les liens du blog avec ?category= ou ?search= arrivent directement sur la liste.
 function scrollToFilteredSectionIfNeeded(root) {
   const params = new URLSearchParams(window.location.search);
@@ -85,11 +95,7 @@ function initBarba() {
   });
 
   barba.hooks.beforeEnter((data) => {
-    if (window.lenis) {
-      window.lenis.scrollTo(0, { immediate: true });
-    } else {
-      window.scrollTo(0, 0);
-    }
+    scrollToTopForNewPage();
     restartWebflowInteractions();
 
     // Le reveal du header produit doit se rejouer à chaque visite.

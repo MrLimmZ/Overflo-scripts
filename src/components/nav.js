@@ -71,6 +71,7 @@ export function initNav(root = document) {
     panel.focus({ preventScroll: true });
 
     document.addEventListener("keydown", onKeydown);
+    document.addEventListener("pointerdown", onOutsidePointerDown, true);
   }
 
   function closeMenu({ restoreFocus = true } = {}) {
@@ -86,10 +87,30 @@ export function initNav(root = document) {
     window.lenis?.start();
 
     document.removeEventListener("keydown", onKeydown);
+    document.removeEventListener("pointerdown", onOutsidePointerDown, true);
 
     if (restoreFocus) {
       (lastFocused || toggle).focus();
     }
+  }
+
+  // Un tap hors du panneau (et hors du bouton) ferme le menu. Le clic qui suit
+  // est absorbé pour ne pas déclencher en même temps ce qu'il y a dessous ;
+  // si le tap devient un glissement, aucun clic n'arrive : on lève le blocage.
+  const SWALLOW_CLICK_MS = 600;
+
+  function onOutsidePointerDown(e) {
+    if (panel.contains(e.target) || toggle.contains(e.target)) return;
+    closeMenu({ restoreFocus: false });
+
+    function swallowClick(clickEvent) {
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+    }
+    document.addEventListener("click", swallowClick, { capture: true, once: true });
+    setTimeout(() => {
+      document.removeEventListener("click", swallowClick, { capture: true });
+    }, SWALLOW_CLICK_MS);
   }
 
   function onKeydown(e) {
