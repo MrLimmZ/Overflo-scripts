@@ -574,7 +574,10 @@ function swapToVideo(img, getVisibilityObserver) {
   const replay = readBoolAttrResponsive(img, "videoReplay", "videoReplayMobile");
   const showControls = img.dataset.videoControls === "true";
   const id = img.dataset.videoId || `video-auto-${++autoIdCounter}`;
-  const threshold = Math.min(1, Math.max(0, readNumberAttr(img, "videoThreshold", 0)));
+  // Vidéo jouée une seule fois : par défaut, on attend qu'elle soit bien
+  // visible (40 %), sinon elle se termine avant qu'on arrive dessus.
+  const defaultThreshold = nativeLoopRequested ? 0 : 0.4;
+  const threshold = Math.min(1, Math.max(0, readNumberAttr(img, "videoThreshold", defaultThreshold)));
   const visibilityObserver = getVisibilityObserver(threshold);
 
   const video = document.createElement("video");

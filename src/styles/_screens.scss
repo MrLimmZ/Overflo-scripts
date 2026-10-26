@@ -21,6 +21,14 @@
   opacity: 1;
 }
 
+/* Écran de la section showcase (Pricing) : la vidéo a des coins carrés.
+   Arrondi proportionnel à la taille de l'écran (56px pour 572px de large),
+   exprimé en % pour suivre sa largeur : horizontal 9,8 % de la largeur,
+   vertical 4,5 % de la hauteur (ratio de l'écran ≈ 0,46). */
+.showcase-banner .showcase-banner--image {
+  border-radius: 9.8% / 4.5%;
+}
+
 /* Hero Product (même mise en page que la home) : en tablette/mobile, l'écran
    prend la largeur du bandeau comme celui de la home (max 424px), avec le
    même arrondi. */
