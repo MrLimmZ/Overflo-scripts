@@ -1,0 +1,44 @@
+/* Écrans de téléphone (desktop) : même taille et même arrondi partout.
+   Référence = l'écran du hero de la home, limité par sa colonne :
+   grille de 3 colonnes (gouttières 96px) dans un bloc plafonné à 1924px,
+   soit (100vw − 304px) / 3, max 561px. Il ne dépasse pas non plus la
+   hauteur dispo (100svh − 2 × 96px de marge).
+   Appliqué au hero home, à « Investing Simplified » et au hero produit. */
+@media screen and (min-width: 992px) {
+  :root {
+    --screen-ratio: calc(1296 / 2805);
+    --screen-w: min(
+      calc(min(100vw - 304px, 1684px) / 3),
+      calc((100svh - 192px) * var(--screen-ratio))
+    );
+    /* Même arrondi que celui dessiné dans l'image du hero (56px pour 572px). */
+    --screen-radius: calc(var(--screen-w) * 56 / 572);
+  }
+
+  .home-header-banner .home-header-banner--img {
+    flex: none;
+    width: var(--screen-w);
+    height: auto;
+    max-width: none;
+  }
+
+  .explain .explain-step-banner {
+    flex: none;
+    align-self: center;
+    width: var(--screen-w);
+    height: auto;
+    border-radius: var(--screen-radius);
+  }
+
+  .explain .explain-step-banner--img,
+  .explain .explain-step-banner video {
+    width: 100%;
+    height: auto;
+    max-height: none;
+  }
+
+  .product-header-list .product-header-list-item {
+    width: var(--screen-w);
+    border-radius: var(--screen-radius);
+  }
+}
