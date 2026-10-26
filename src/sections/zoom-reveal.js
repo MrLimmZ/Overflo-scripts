@@ -8,15 +8,39 @@
 
 import { prefersReducedMotion, onMotionPreferenceChange } from "../utils/motion.js";
 import { hasScrollTrigger, BREAKPOINTS, maxWidthQuery } from "../utils/env.js";
-import { onMediaChange } from "../utils/listeners.js";
+import { onMediaChange, onWindowEvent } from "../utils/listeners.js";
 import { getControllerForElement } from "../components/decorative-videos.js";
 
 const PARALLAX_STRENGTH = 3;
 const TILT_STRENGTH = 0.6;
 const MOUSE_EASE = 0.08;
-const MOBILE_ENTER_DURATION = 1.2;
-const FULL_PROGRESS_THRESHOLD = 0.999;
-const TOOLS_VIDEO_STAGGER = 80;
+
+// Entrée des cartes « outils » : une par une, en tournant autour de l'écran
+// depuis derrière lui jusqu'à leur place (retours client 009 / 065).
+const TOOL_SPAN = 0.42; // part de la progression occupée par chaque carte
+const SWIRL_ANGLE = (115 * Math.PI) / 180; // arc parcouru autour de l'écran
+const SWIRL_SPIN = 18; // légère rotation de la carte pendant l'arc (deg)
+const START_RADIUS = 0.2; // départ près du centre (derrière l'écran)
+const TOOL_VIDEO_AT = 0.98; // la vidéo d'une carte démarre quand elle est posée
+const DESKTOP_PIN_VH = 2.4; // longueur du pin, en hauteurs d'écran
+
+// Mobile / tablette : la scène Webflow est réduite à la largeur de l'écran
+// (téléphone ~95 px). On l'agrandit, on ajoute la hauteur gagnée sous la
+// scène (le scale ne change pas la mise en page) et on rapproche les cartes
+// pour qu'elles restent à l'écran.
+const MOBILE_STAGE_SCALE = 1.8;
+const MOBILE_SPREAD_X = 0.62; // cartes rapprochées horizontalement…
+const MOBILE_SPREAD_Y = 1.2; // …et étalées verticalement, pour moins se chevaucher
+const MOBILE_EDGE_MARGIN = 8; // px visibles gardés entre une carte et le bord
+
+// La scène (écran + cartes) est dessinée en pixels pour un écran 1440×900.
+// Sur un écran plus grand, elle est agrandie d'autant pour garder la même
+// place à l'écran (sinon elle paraît petite et flotte en bas de la section).
+const STAGE_REF_WIDTH = 1440;
+const STAGE_REF_HEIGHT = 900;
+const STAGE_MAX_SCALE = 1.8;
+// Écart titre → scène en 1440×900 (149 px / 900), gardé sur grand écran.
+const STAGE_GAP_RATIO = 0.165;
 
 function readTranslate(el) {
   const transform = getComputedStyle(el).transform;
@@ -60,11 +84,30 @@ export function initZoomReveal(root = document) {
     const translate = readTranslate(tool);
     const w = tool.offsetWidth;
     const h = tool.offsetHeight;
+    const offset = { x: translate.x + w / 2, y: translate.y + h / 2 };
     return {
-      offset: { x: translate.x + w / 2, y: translate.y + h / 2 },
+      offset,
       depth: parseFloat(tool.dataset.zoomOffset) || 1,
+      angle: Math.atan2(offset.y, offset.x),
+      radius: Math.hypot(offset.x, offset.y),
+      rank: 0,
     };
   });
+
+  // Ordre d'apparition : dans le sens des aiguilles d'une montre en partant du
+  // haut, pour que les cartes se suivent autour de l'écran (pas au hasard).
+  toolData
+    .map((data, index) => ({ index, a: (data.angle + Math.PI * 2.5) % (Math.PI * 2) }))
+    .sort((p, q) => p.a - q.a)
+    .forEach(({ index }, rank) => {
+      toolData[index].rank = rank;
+    });
+
+  function toolLocalProgress(index, progress) {
+    const count = tools.length;
+    const start = count > 1 ? (toolData[index].rank * (1 - TOOL_SPAN)) / (count - 1) : 0;
+    return Math.min(1, Math.max(0, (progress - start) / TOOL_SPAN));
+  }
 
   gsap.set(main, { zIndex: 5 });
   gsap.set(tools, {
@@ -86,6 +129,7 @@ export function initZoomReveal(root = document) {
   let rafId = null;
   let mouseController = null;
   let mobileVideoObserver = null;
+  let mobileHalfWidth = Infinity; // mis à jour par applyStageScale() en mobile
   let toolsTriggerTimeouts = [];
 
   const toolsVideoState = {
@@ -123,20 +167,9 @@ export function initZoomReveal(root = document) {
     return toolsVideoState.controllers;
   }
 
-  function triggerToolsVideos() {
-    if (toolsVideoState.revealed) return;
-    const controllers = getToolsControllers();
-    if (!controllers.length) return;
-    toolsVideoState.revealed = true;
-    controllers.forEach((c, index) => {
-      const id = setTimeout(() => c.trigger(), index * TOOLS_VIDEO_STAGGER);
-      toolsTriggerTimeouts.push(id);
-    });
-  }
-
   function resetToolsVideos() {
-    if (!toolsVideoState.revealed) return;
-    toolsVideoState.revealed = false;
+    if (!triggeredTools.size) return;
+    triggeredTools.clear();
     clearToolsTriggerTimeouts();
     getToolsControllers().forEach((c) => c.reset());
   }
@@ -144,6 +177,7 @@ export function initZoomReveal(root = document) {
   function resetRevealVideos() {
     clearToolsTriggerTimeouts();
     toolsVideoState.revealed = false;
+    triggeredTools.clear();
     getRevealVideoControllers(section).forEach((c) => c.reset());
   }
 
@@ -153,24 +187,58 @@ export function initZoomReveal(root = document) {
       rotateX: -mouseY * TILT_STRENGTH * mainDepth * progress,
     });
 
+    const isMobile = mobileMq.matches;
     tools.forEach((tool, index) => {
-      const { offset, depth } = toolData[index];
+      let { depth, angle, radius } = toolData[index];
+      if (isMobile) {
+        // Position finale resserrée en largeur et gardée dans l'écran.
+        const { offset } = toolData[index];
+        const maxX = Math.max(0, mobileHalfWidth - tool.offsetWidth / 2);
+        const ox = Math.max(-maxX, Math.min(maxX, offset.x * MOBILE_SPREAD_X));
+        const oy = offset.y * MOBILE_SPREAD_Y;
+        angle = Math.atan2(oy, ox);
+        radius = Math.hypot(ox, oy);
+      }
+      const local = toolLocalProgress(index, progress);
+      const eased = 1 - Math.pow(1 - local, 3);
 
-      const x = offset.x * progress + mouseX * PARALLAX_STRENGTH * depth;
-      const y = offset.y * progress + mouseY * PARALLAX_STRENGTH * depth;
+      // Arc autour de l'écran : la carte part de derrière lui (près du centre)
+      // et tourne jusqu'à sa position finale.
+      const a = angle - SWIRL_ANGLE * (1 - eased);
+      const r = radius * (START_RADIUS + (1 - START_RADIUS) * eased);
+      const x = Math.cos(a) * r + mouseX * PARALLAX_STRENGTH * depth * eased;
+      const y = Math.sin(a) * r + mouseY * PARALLAX_STRENGTH * depth * eased;
 
-      // Le tilt d'entrée a été retiré : seul le tilt lié à la souris subsiste.
-      const mouseRotateY = mouseX * TILT_STRENGTH * depth * progress;
-      const mouseRotateX = -mouseY * TILT_STRENGTH * depth * progress;
+      // Seul le tilt lié à la souris subsiste une fois la carte posée.
+      const mouseRotateY = mouseX * TILT_STRENGTH * depth * eased;
+      const mouseRotateX = -mouseY * TILT_STRENGTH * depth * eased;
 
       gsap.set(tool, {
         x,
         y,
         rotateX: mouseRotateX,
         rotateY: mouseRotateY,
-        scale: 0.4 + 0.6 * progress,
-        opacity: progress,
+        rotation: -SWIRL_SPIN * (1 - eased),
+        scale: 0.5 + 0.5 * eased,
+        opacity: Math.min(1, local * 3),
+        // En mobile les cartes chevauchent le téléphone : elles passent
+        // devant lui à la fin de leur arc.
+        zIndex: isMobile && eased > 0.6 ? 6 : 1,
       });
+    });
+  }
+
+  // Vidéo d'une carte : elle démarre quand la carte arrive à sa place.
+  const triggeredTools = new Set();
+  function syncToolVideos(progress) {
+    tools.forEach((tool, index) => {
+      if (triggeredTools.has(tool) || toolLocalProgress(index, progress) < TOOL_VIDEO_AT) return;
+      const controller =
+        getControllerForElement(tool) ||
+        getControllerForElement(tool.querySelector("video[data-controller-id]"));
+      if (!controller) return;
+      triggeredTools.add(tool);
+      controller.trigger();
     });
   }
 
@@ -184,6 +252,7 @@ export function initZoomReveal(root = document) {
         y: offset.y,
         rotateX: 0,
         rotateY: 0,
+        rotation: 0,
         scale: 1,
         opacity: 1,
       });
@@ -200,9 +269,7 @@ export function initZoomReveal(root = document) {
     let curMouseY = 0;
 
     function syncToolsVideos(p) {
-      if (p >= FULL_PROGRESS_THRESHOLD) {
-        triggerToolsVideos();
-      }
+      syncToolVideos(p);
     }
 
     function tick() {
@@ -213,7 +280,7 @@ export function initZoomReveal(root = document) {
       id: "zoom-reveal",
       trigger: section,
       start: "top top+=1",
-      end: () => "+=" + window.innerHeight * 1.2,
+      end: () => "+=" + window.innerHeight * DESKTOP_PIN_VH,
       pin: true,
       pinType: "transform",
       pinSpacing: true,
@@ -292,25 +359,20 @@ export function initZoomReveal(root = document) {
     });
   }
 
+  // Mobile / tablette : pas de pin, la même entrée carte par carte suit le
+  // scroll pendant que la section traverse l'écran.
   function createMobileEnterAnimation() {
     content.style.perspective = "1400px";
     updateToolsProgress(0);
 
-    const state = { progress: 0 };
-
     return ScrollTrigger.create({
       id: "zoom-reveal-mobile-enter",
-      trigger: section,
-      start: "top 80%",
-      once: true,
-      onEnter: () => {
-        gsap.to(state, {
-          progress: 1,
-          duration: MOBILE_ENTER_DURATION,
-          ease: "power2.out",
-          onUpdate: () => updateToolsProgress(state.progress),
-        });
-      },
+      trigger: content,
+      start: "top 85%",
+      end: "center 40%",
+      scrub: 0.5,
+      invalidateOnRefresh: true,
+      onUpdate: (self) => updateToolsProgress(self.progress),
     });
   }
 
@@ -381,9 +443,76 @@ export function initZoomReveal(root = document) {
     }
   }
 
+  // Desktop uniquement ; la propriété CSS `scale` se cumule avec les
+  // transformations GSAP des cartes sans les écraser.
+  function applyStageScale() {
+    content.style.scale = "";
+    content.style.translate = "";
+    content.style.marginBottom = "";
+    content.style.transformOrigin = "";
+    if (mobileMq.matches) {
+      content.style.transformOrigin = "50% 0%";
+      content.style.scale = String(MOBILE_STAGE_SCALE);
+      const rect = content.getBoundingClientRect();
+      const layoutWidth = content.offsetWidth || 1;
+      const visualScale = rect.width / layoutWidth; // scale Webflow × le nôtre
+      // Demi-largeur d'écran disponible, en coordonnées de la scène.
+      mobileHalfWidth = (window.innerWidth / 2 - MOBILE_EDGE_MARGIN) / (visualScale || 1);
+      // Le scale ne change pas la mise en page : on réserve la hauteur affichée.
+      if (rect.height > 50) {
+        const extra = rect.height - content.offsetHeight + 56;
+        content.style.marginBottom = `${Math.max(0, Math.round(extra))}px`;
+      }
+      return;
+    }
+
+    const ratio = Math.min(
+      window.innerWidth / STAGE_REF_WIDTH,
+      window.innerHeight / STAGE_REF_HEIGHT,
+    );
+    const scale = Math.min(STAGE_MAX_SCALE, Math.max(1, ratio));
+    if (scale <= 1) return;
+
+    // La scène est calée en bas de la section : elle grandit vers le haut,
+    // puis remonte pour garder le même écart relatif avec le titre.
+    const rect = content.getBoundingClientRect();
+    const heading = section.querySelector("h2");
+    content.style.transformOrigin = "50% 100%";
+    content.style.scale = String(Math.round(scale * 1000) / 1000);
+    // Tant que l'écran (vidéo) n'est pas chargé, la scène n'a pas sa vraie
+    // hauteur : on ne décale pas, le prochain refresh le fera.
+    if (!heading || rect.height < 100) return;
+
+    const headingBottom = heading.getBoundingClientRect().bottom;
+    const scaledTop = rect.bottom - rect.height * scale;
+    const targetTop = headingBottom + window.innerHeight * STAGE_GAP_RATIO;
+    const shift = Math.min(Math.max(0, scaledTop - targetTop), rect.height * (scale - 1));
+    if (shift > 0) content.style.translate = `0 ${-Math.round(shift)}px`;
+  }
+
+  applyStageScale();
   setup();
   onMotionPreferenceChange(setup, section);
-  onMediaChange(mobileMq, section, setup);
+  onMediaChange(mobileMq, section, () => {
+    applyStageScale();
+    setup();
+  });
+
+  let stageResizeTimer;
+  onWindowEvent("resize", section, () => {
+    clearTimeout(stageResizeTimer);
+    stageResizeTimer = setTimeout(applyStageScale, 150);
+  });
+  onWindowEvent("load", section, applyStageScale);
+  // Après chaque refresh, la mise en page est stable (images chargées, pins posés).
+  function onStageRefresh() {
+    if (!section.isConnected) {
+      ScrollTrigger.removeEventListener("refresh", onStageRefresh);
+      return;
+    }
+    applyStageScale();
+  }
+  ScrollTrigger.addEventListener("refresh", onStageRefresh);
 
   return st;
 }
