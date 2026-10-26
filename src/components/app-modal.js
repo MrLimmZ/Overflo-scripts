@@ -173,8 +173,58 @@ function getFocusable(root) {
   ).filter((el) => el.offsetParent !== null);
 }
 
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+function isOpen() {
+  return Boolean(modal && !modal.hidden);
+}
+
+// La fenêtre de la modale peut défiler si son contenu dépasse (petits
+// écrans) : on laisse passer le scroll natif seulement là, et seulement
+// s'il reste de la place dans ce sens (sinon le navigateur le transmettrait
+// à la page).
+function canScrollInside(target, deltaY) {
+  const dialog = modal.querySelector(".app-modal-dialog");
+  if (!dialog || !dialog.contains(target)) return false;
+  if (dialog.scrollHeight <= dialog.clientHeight) return false;
+  if (deltaY < 0) return dialog.scrollTop > 0;
+  if (deltaY > 0) return dialog.scrollTop + dialog.clientHeight < dialog.scrollHeight - 1;
+  return true;
+}
+
+// Écoutés sur window en capture et enregistrés avant les modules de page :
+// passent avant les sections épinglées (Investing Simplified, etc.) qui
+// pilotent elles aussi la molette.
+function onWheelWhileOpen(e) {
+  if (!isOpen()) return;
+  e.stopImmediatePropagation();
+  if (!canScrollInside(e.target, e.deltaY)) e.preventDefault();
+}
+
+let touchY = 0;
+function onTouchStartWhileOpen(e) {
+  if (!isOpen()) return;
+  touchY = e.touches[0]?.clientY ?? 0;
+}
+function onTouchMoveWhileOpen(e) {
+  if (!isOpen()) return;
+  e.stopImmediatePropagation();
+  const y = e.touches[0]?.clientY ?? touchY;
+  const deltaY = touchY - y;
+  touchY = y;
+  if (!canScrollInside(e.target, deltaY)) e.preventDefault();
+}
+
 function onKeyDown(e) {
-  if (!modal || modal.hidden) return;
+  if (!isOpen()) return;
+  if (SCROLL_KEYS.has(e.key) && !e.target.closest("input, textarea, select")) {
+    e.stopImmediatePropagation();
+    // Espace sur un bouton ou un lien de la modale : on garde l'action.
+    if (!(e.key === " " && e.target.closest(".app-modal button, .app-modal a"))) {
+      e.preventDefault();
+    }
+    return;
+  }
   if (e.key === "Escape") {
     e.preventDefault();
     closeAppModal();
@@ -288,7 +338,12 @@ function handleQueryParam() {
 
 export function initAppModal() {
   document.addEventListener("click", onDocumentClick, true);
-  document.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keydown", onKeyDown, true);
+  window.addEventListener("wheel", onWheelWhileOpen, { capture: true, passive: false });
+  window.addEventListener("touchstart", onTouchStartWhileOpen, { capture: true, passive: true });
+  window.addEventListener("touchmove", onTouchMoveWhileOpen, { capture: true, passive: false });
   window.addEventListener("popstate", closeAppModal);
-  handleQueryParam();
+  // Après l'init des modules de page (lancés juste après), qui peuvent
+  // relancer Lenis.
+  setTimeout(handleQueryParam, 0);
 }
