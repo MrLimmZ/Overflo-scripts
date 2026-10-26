@@ -81,3 +81,11 @@
 .navbar .menu-item .w--current {
   color: var(--_colors---text--text-accent) !important;
 }
+
+/* Nav en version claire (au-dessus d'un fond sombre ou orange) : le lien de
+   la page active passe en blanc comme les autres, sinon l'orange disparaît
+   sur un fond orange. */
+.navbar .menu.nav-light-menu .menu-item .w--current,
+.navbar .navbar-content--mobile.nav-light-mobile-menu .menu-item .w--current {
+  color: #ffffff !important;
+}
