@@ -72,6 +72,9 @@ function primeFirstFrame(video) {
     video
       .play()
       .then(() => {
+        // Déjà lancée entre-temps (vidéo visible dès le chargement, ex. hero) :
+        // on ne l'arrête pas.
+        if (engagedIds.has(video.dataset.controllerId)) return;
         video.pause();
         video.currentTime = 0;
       })
