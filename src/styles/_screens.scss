@@ -4,6 +4,12 @@
    soit (100vw − 304px) / 3, max 561px. Il ne dépasse pas non plus la
    hauteur dispo (100svh − 2 × 96px de marge).
    Appliqué au hero home, à « Investing Simplified » et au hero produit. */
+/* Écran du hero : la vidéo a des coins carrés, l'arrondi vient du CSS.
+   Mobile/tablet : l'écran fait (100vw − 64px), max 424px. */
+.home-header-banner .home-header-banner--img {
+  border-radius: calc(min(100vw - 64px, 424px) * 56 / 572);
+}
+
 @media screen and (min-width: 992px) {
   :root {
     --screen-ratio: calc(1296 / 2805);
@@ -20,6 +26,7 @@
     width: var(--screen-w);
     height: auto;
     max-width: none;
+    border-radius: var(--screen-radius);
   }
 
   /* L'écran n'occupe plus toute la hauteur : on le centre verticalement. */
