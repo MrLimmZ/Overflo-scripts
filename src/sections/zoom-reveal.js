@@ -37,8 +37,6 @@ const MOBILE_EDGE_MARGIN = 8; // px visibles gardés entre une carte et le bord
 const STAGE_REF_WIDTH = 1440;
 const STAGE_REF_HEIGHT = 900;
 const STAGE_MAX_SCALE = 1.8;
-// Écart titre → scène en 1440×900 (149 px / 900), gardé sur grand écran.
-const STAGE_GAP_RATIO = 0.165;
 
 function readTranslate(el) {
   const transform = getComputedStyle(el).transform;
@@ -473,21 +471,11 @@ export function initZoomReveal(root = document) {
     const scale = Math.min(STAGE_MAX_SCALE, Math.max(1, ratio));
     if (scale <= 1) return;
 
-    // La scène est calée en bas de la section : elle grandit vers le haut,
-    // puis remonte pour garder le même écart relatif avec le titre.
-    const rect = content.getBoundingClientRect();
-    const heading = section.querySelector("h2");
+    // La scène est calée en bas de la section : elle grandit vers le haut
+    // depuis le bas, ce qui garde aussi la même part du téléphone coupée en
+    // bas (volontaire) qu'en 1440×900.
     content.style.transformOrigin = "50% 100%";
     content.style.scale = String(Math.round(scale * 1000) / 1000);
-    // Tant que l'écran (vidéo) n'est pas chargé, la scène n'a pas sa vraie
-    // hauteur : on ne décale pas, le prochain refresh le fera.
-    if (!heading || rect.height < 100) return;
-
-    const headingBottom = heading.getBoundingClientRect().bottom;
-    const scaledTop = rect.bottom - rect.height * scale;
-    const targetTop = headingBottom + window.innerHeight * STAGE_GAP_RATIO;
-    const shift = Math.min(Math.max(0, scaledTop - targetTop), rect.height * (scale - 1));
-    if (shift > 0) content.style.translate = `0 ${-Math.round(shift)}px`;
   }
 
   applyStageScale();
