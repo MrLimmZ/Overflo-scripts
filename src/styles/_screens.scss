@@ -10,6 +10,31 @@
   border-radius: calc(min(100vw - 64px, 424px) * 56 / 572);
 }
 
+/* Hero Product : il reprend les classes de mise en page du hero de la home,
+   que le code personnalisé du site (réglages Webflow) masque partout en
+   attendant l'animation d'entrée de la home. Sur Product, cette animation
+   n'existe pas : on les affiche. L'écran garde sa propre apparition
+   (animations/product-header-reveal.js). */
+.product-header .home-header--title,
+.product-header .home-header-banner,
+.product-header .home-header-content {
+  opacity: 1;
+}
+
+/* Hero Product (même mise en page que la home) : en tablette/mobile, l'écran
+   prend la largeur du bandeau comme celui de la home (max 424px), avec le
+   même arrondi. */
+@media screen and (max-width: 991px) {
+  .home-header-banner .product-header-list {
+    width: 100%;
+  }
+
+  .home-header-banner .product-header-list .product-header-list-item {
+    width: min(100%, 424px);
+    border-radius: calc(min(100vw - 64px, 424px) * 56 / 572);
+  }
+}
+
 @media screen and (min-width: 992px) {
   :root {
     --screen-ratio: calc(1296 / 2805);
