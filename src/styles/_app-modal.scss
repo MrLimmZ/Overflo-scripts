@@ -1,0 +1,219 @@
+/* Modale « Get the app » (components/app-modal.js, retour client 091). */
+.app-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--_spacing---space-page);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.app-modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--_colors---text--background-dark) 55%, transparent);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.app-modal-dialog {
+  position: relative;
+  width: min(100%, 720px);
+  max-height: calc(100svh - 2 * var(--_spacing---space-page));
+  overflow: auto;
+  padding: var(--_spacing---space-7);
+  border-radius: var(--_border-radius---radius-xl);
+  background: var(--_colors---text--background-secondary);
+  color: var(--_colors---text--text-primary);
+  opacity: 0;
+  transform: translateY(16px) scale(0.98);
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+
+.app-modal.is-open {
+  .app-modal-overlay {
+    opacity: 1;
+  }
+  .app-modal-dialog {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.app-modal-close {
+  position: absolute;
+  top: var(--_spacing---space-4);
+  right: var(--_spacing---space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--_border-radius---radius-full);
+  background: var(--_colors---text--background-primary);
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+
+  &:hover {
+    transform: scale(1.06);
+  }
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+}
+
+.app-modal-body {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--_spacing---space-7);
+  align-items: center;
+}
+
+.app-modal-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--_spacing---space-4);
+
+  h2 {
+    margin: 0;
+    padding-right: var(--_spacing---space-7);
+  }
+}
+
+.app-modal-lead {
+  margin: 0;
+  color: var(--_colors---text--text-secondary);
+}
+
+.app-modal-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--_spacing---space-3);
+  margin: var(--_spacing---space-2) 0 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    position: relative;
+    padding-left: 32px;
+
+    &::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 20px;
+      height: 20px;
+      transform: translateY(-50%);
+      border-radius: var(--_border-radius---radius-full);
+      background: var(--_colors---text--background-accent)
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M6 10.5l2.5 2.5L14 7.5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+        center / 20px no-repeat;
+    }
+  }
+}
+
+.app-modal-get {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--_spacing---space-4);
+}
+
+.app-modal-qr {
+  width: 176px;
+  height: 176px;
+  padding: var(--_spacing---space-3);
+  border-radius: var(--_border-radius---radius-lg);
+  background: #fff;
+  box-sizing: content-box;
+
+  &[hidden] {
+    display: none;
+  }
+
+  svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Modules du QR dans le marron du site (contraste suffisant pour la lecture). */
+  svg path {
+    fill: var(--_colors---text--text-primary);
+  }
+}
+
+.app-modal-stores {
+  display: flex;
+  gap: var(--_spacing---space-2);
+  justify-content: center;
+
+  a.store-link {
+    height: 40px;
+  }
+}
+
+.app-modal-store-fallback {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--_spacing---space-4);
+  border-radius: var(--_border-radius---radius-sm);
+  background: var(--_colors---text--background-dark);
+  color: var(--_colors---text--text-light);
+  font-size: var(--_typographies---font-size-sm);
+  text-decoration: none;
+}
+
+/* Téléphone (ou petit écran) : une colonne, sans QR code, modale en bas. */
+@media screen and (max-width: 767px) {
+  .app-modal {
+    align-items: flex-end;
+  }
+
+  .app-modal-dialog {
+    padding: var(--_spacing---space-6) var(--_spacing---space-5);
+  }
+
+  .app-modal-body {
+    grid-template-columns: 1fr;
+    gap: var(--_spacing---space-6);
+  }
+
+  .app-modal-get {
+    align-items: stretch;
+  }
+
+  .app-modal-qr {
+    display: none;
+  }
+}
+
+.app-modal.is-mobile {
+  .app-modal-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-modal-overlay,
+  .app-modal-dialog {
+    transition: none;
+  }
+}
