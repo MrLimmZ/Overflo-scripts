@@ -493,34 +493,51 @@ export function initDecorativeVideos(root = document) {
   if (!images.length) return;
   if (prefersReducedMotion()) return;
 
-  const visibilityObserver = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        const video = entry.target;
-        if (video.dataset.videoTrigger !== "visible") return;
-        if (video.dataset.videoLazy === "false") return;
+  // Un observer par seuil de visibilité (data-video-threshold, 0 par défaut).
+  const observers = new Map();
+  const getVisibilityObserver = (threshold) => {
+    if (observers.has(threshold)) return observers.get(threshold);
+    const steps = threshold > 0 ? Array.from({ length: 11 }, (_, i) => i / 10) : [0];
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const video = entry.target;
+          if (video.dataset.videoTrigger !== "visible") return;
+          if (video.dataset.videoLazy === "false") return;
 
-        const controller = getControllerForElement(video);
+          const controller = getControllerForElement(video);
 
-        if (entry.isIntersecting) {
-          if (controller) {
-            controller.trigger();
-          } else {
-            video.play().catch(() => {});
+          // Seuil atteignable même pour une vidéo plus haute que l'écran.
+          const rootHeight = entry.rootBounds?.height || window.innerHeight;
+          const height = entry.boundingClientRect.height || 1;
+          const needed = Math.min(threshold, (rootHeight * 0.9) / height);
+          const visible = entry.isIntersecting && entry.intersectionRatio >= needed;
+
+          if (visible) {
+            if (video.dataset.videoInView === "1") return;
+            video.dataset.videoInView = "1";
+            if (controller) {
+              controller.trigger();
+            } else {
+              video.play().catch(() => {});
+            }
+          } else if (!entry.isIntersecting) {
+            video.dataset.videoInView = "0";
+            if (controller) {
+              controller.pause();
+            } else {
+              video.pause();
+            }
           }
-        } else {
-          if (controller) {
-            controller.pause();
-          } else {
-            video.pause();
-          }
-        }
-      });
-    },
-    { threshold: 0 }
-  );
+        });
+      },
+      { threshold: steps }
+    );
+    observers.set(threshold, observer);
+    return observer;
+  };
 
-  images.forEach((img) => swapToVideo(img, visibilityObserver));
+  images.forEach((img) => swapToVideo(img, getVisibilityObserver));
 }
 
 function attachVideoSources(video, { webmSrc, hevcSrc }) {
@@ -540,7 +557,7 @@ function attachVideoSources(video, { webmSrc, hevcSrc }) {
   video.appendChild(sourceWebm);
 }
 
-function swapToVideo(img, visibilityObserver) {
+function swapToVideo(img, getVisibilityObserver) {
   const webmSrc = img.dataset.videoSource;
   if (!webmSrc) return;
 
@@ -557,6 +574,8 @@ function swapToVideo(img, visibilityObserver) {
   const replay = readBoolAttrResponsive(img, "videoReplay", "videoReplayMobile");
   const showControls = img.dataset.videoControls === "true";
   const id = img.dataset.videoId || `video-auto-${++autoIdCounter}`;
+  const threshold = Math.min(1, Math.max(0, readNumberAttr(img, "videoThreshold", 0)));
+  const visibilityObserver = getVisibilityObserver(threshold);
 
   const video = document.createElement("video");
   video.poster = img.currentSrc || img.src;
@@ -618,6 +637,9 @@ function swapToVideo(img, visibilityObserver) {
       video.addEventListener(
         "canplay",
         () => {
+          // Pas de lecture hors écran : sinon la vidéo est finie avant
+          // qu'on arrive dessus. L'observer la lance quand elle est visible.
+          if (lazy && video.dataset.videoInView !== "1") return;
           controller.trigger();
         },
         { once: true }

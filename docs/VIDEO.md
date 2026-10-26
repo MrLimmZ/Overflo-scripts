@@ -26,6 +26,7 @@ Respecte `prefers-reduced-motion` : si activé, aucune vidéo n'est créée, l'i
 | `data-video-autoplay` | Lecture automatique (mode `visible` uniquement) | `true` / `false` | `true` |
 | `data-video-loop` (alias `data-video-infinite`) | Boucle sur toute la vidéo | `true` / `false` | `true` |
 | `data-video-lazy` | Coupe la lecture hors viewport (mode `visible`) | `true` / `false` | `true` |
+| `data-video-threshold` | Part de la vidéo qui doit être visible pour lancer la lecture (mode `visible`). Une vidéo n'est jamais lancée hors écran, même en autoplay. | nombre de `0` à `1` | `0` |
 | `data-video-delay` | Délai en ms avant lecture, après un `trigger()` | nombre (ms) | `0` |
 | `data-video-loop-start` | Temps (secondes) où repart la boucle après l'intro | nombre (s) | — |
 | `data-video-loop-end` | Temps (secondes) où la boucle revient à `loop-start` | nombre (s) | — |
