@@ -15,12 +15,10 @@ const PARALLAX_STRENGTH = 3;
 const TILT_STRENGTH = 0.6;
 const MOUSE_EASE = 0.08;
 
-// Entrée des cartes « outils » : une par une, en tournant autour de l'écran
-// depuis derrière lui jusqu'à leur place (retours client 009 / 065).
+// Entrée des cartes « outils » : elles sortent du centre en ligne droite,
+// comme avant, mais l'une après l'autre (stagger) au lieu de toutes ensemble
+// (retours client 009 / 065).
 const TOOL_SPAN = 0.42; // part de la progression occupée par chaque carte
-const SWIRL_ANGLE = (115 * Math.PI) / 180; // arc parcouru autour de l'écran
-const SWIRL_SPIN = 18; // légère rotation de la carte pendant l'arc (deg)
-const START_RADIUS = 0.2; // départ près du centre (derrière l'écran)
 const TOOL_VIDEO_AT = 0.98; // la vidéo d'une carte démarre quand elle est posée
 const DESKTOP_PIN_VH = 2.4; // longueur du pin, en hauteurs d'écran
 
@@ -89,16 +87,24 @@ export function initZoomReveal(root = document) {
       offset,
       depth: parseFloat(tool.dataset.zoomOffset) || 1,
       angle: Math.atan2(offset.y, offset.x),
-      radius: Math.hypot(offset.x, offset.y),
+      // Ordre choisi dans Webflow : data-zoom-order="1", "2"… sur la carte.
+      order: parseFloat(tool.dataset.zoomOrder),
       rank: 0,
     };
   });
 
-  // Ordre d'apparition : dans le sens des aiguilles d'une montre en partant du
-  // haut, pour que les cartes se suivent autour de l'écran (pas au hasard).
+  // Ordre d'apparition : d'abord les cartes qui ont un data-zoom-order (du plus
+  // petit au plus grand), puis les autres dans le sens des aiguilles d'une
+  // montre en partant du haut.
+  const clockwise = (data) => (data.angle + Math.PI * 2.5) % (Math.PI * 2);
   toolData
-    .map((data, index) => ({ index, a: (data.angle + Math.PI * 2.5) % (Math.PI * 2) }))
-    .sort((p, q) => p.a - q.a)
+    .map((data, index) => ({ index, data }))
+    .sort((p, q) => {
+      const po = Number.isFinite(p.data.order) ? p.data.order : Infinity;
+      const qo = Number.isFinite(q.data.order) ? q.data.order : Infinity;
+      if (po !== qo) return po - qo;
+      return clockwise(p.data) - clockwise(q.data);
+    })
     .forEach(({ index }, rank) => {
       toolData[index].rank = rank;
     });
@@ -189,41 +195,35 @@ export function initZoomReveal(root = document) {
 
     const isMobile = mobileMq.matches;
     tools.forEach((tool, index) => {
-      let { depth, angle, radius } = toolData[index];
+      const { offset, depth } = toolData[index];
+      let targetX = offset.x;
+      let targetY = offset.y;
       if (isMobile) {
         // Position finale resserrée en largeur et gardée dans l'écran.
-        const { offset } = toolData[index];
         const maxX = Math.max(0, mobileHalfWidth - tool.offsetWidth / 2);
-        const ox = Math.max(-maxX, Math.min(maxX, offset.x * MOBILE_SPREAD_X));
-        const oy = offset.y * MOBILE_SPREAD_Y;
-        angle = Math.atan2(oy, ox);
-        radius = Math.hypot(ox, oy);
+        targetX = Math.max(-maxX, Math.min(maxX, offset.x * MOBILE_SPREAD_X));
+        targetY = offset.y * MOBILE_SPREAD_Y;
       }
+
+      // Progression propre à la carte : elle sort du centre en ligne droite.
       const local = toolLocalProgress(index, progress);
-      const eased = 1 - Math.pow(1 - local, 3);
+      const x = targetX * local + mouseX * PARALLAX_STRENGTH * depth;
+      const y = targetY * local + mouseY * PARALLAX_STRENGTH * depth;
 
-      // Arc autour de l'écran : la carte part de derrière lui (près du centre)
-      // et tourne jusqu'à sa position finale.
-      const a = angle - SWIRL_ANGLE * (1 - eased);
-      const r = radius * (START_RADIUS + (1 - START_RADIUS) * eased);
-      const x = Math.cos(a) * r + mouseX * PARALLAX_STRENGTH * depth * eased;
-      const y = Math.sin(a) * r + mouseY * PARALLAX_STRENGTH * depth * eased;
-
-      // Seul le tilt lié à la souris subsiste une fois la carte posée.
-      const mouseRotateY = mouseX * TILT_STRENGTH * depth * eased;
-      const mouseRotateX = -mouseY * TILT_STRENGTH * depth * eased;
+      // Le tilt d'entrée a été retiré : seul le tilt lié à la souris subsiste.
+      const mouseRotateY = mouseX * TILT_STRENGTH * depth * local;
+      const mouseRotateX = -mouseY * TILT_STRENGTH * depth * local;
 
       gsap.set(tool, {
         x,
         y,
         rotateX: mouseRotateX,
         rotateY: mouseRotateY,
-        rotation: -SWIRL_SPIN * (1 - eased),
-        scale: 0.5 + 0.5 * eased,
-        opacity: Math.min(1, local * 3),
-        // En mobile les cartes chevauchent le téléphone : elles passent
-        // devant lui à la fin de leur arc.
-        zIndex: isMobile && eased > 0.6 ? 6 : 1,
+        scale: 0.4 + 0.6 * local,
+        opacity: local,
+        // En mobile les cartes chevauchent le téléphone : une fois sorties,
+        // elles passent devant lui.
+        zIndex: isMobile && local > 0.6 ? 6 : 1,
       });
     });
   }
