@@ -27,6 +27,12 @@ const CONTENT_DURATION = SCROLL_DURATION * 0.35;
 const CONTENT_EASE = "power3.inOut";
 const CONTENT_TRANSLATE_Y = 20;
 
+// Les écrans d'« Investing Simplified » ont leurs coins arrondis dessinés dans
+// l'image (56 px sur 572 px de large), plus arrondis que le border-radius CSS
+// de leur boîte (16 px). La forme de fond vise cet arrondi réel, pour que ses
+// coins ne dépassent pas de ceux du téléphone à la fin de la transition.
+const SCREEN_CORNER_RATIO = 56 / 572;
+
 function createHomeHeaderPin(section) {
   const trigger = ScrollTrigger.create({
     id: "home-header-pin",
@@ -86,7 +92,10 @@ export function initHomeHeaderSnap(root = document) {
       return { width: 0, height: 0, borderRadius: "0px" };
     }
     const rect = banner.getBoundingClientRect();
-    const borderRadius = getComputedStyle(banner).borderRadius;
+    // Arrondi de l'écran visible (image/vidéo), pas celui de la boîte.
+    const media = banner.querySelector("video, img");
+    const mediaWidth = media ? media.getBoundingClientRect().width : rect.width;
+    const borderRadius = `${Math.round(mediaWidth * SCREEN_CORNER_RATIO)}px`;
     return { width: rect.width, height: rect.height, top: rect.top, left: rect.left, borderRadius };
   }
 
