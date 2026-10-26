@@ -378,17 +378,6 @@ export function initExplainSteps(root = document) {
     return currentActiveIndex > 1;
   }
 
-  function snapToBento() {
-    locked = true;
-    lenisStop();
-    forceScrollTo(trigger.end);
-    boundarySettledAt = performance.now();
-    gsap.delayedCall(UNSTOP_DELAY, () => {
-      lenisStart();
-      locked = false;
-    });
-  }
-
   function snapToLastStep() {
     locked = true;
     lenisStop();
@@ -426,12 +415,13 @@ export function initExplainSteps(root = document) {
 
     if (performance.now() - boundarySettledAt < BOUNDARY_COOLDOWN_MS) return;
 
+    // Sortie par le bas : on laisse Lenis continuer avec son élan. Recaler
+    // sur trigger.end puis stopper Lenis faisait un petit recul suivi d'un
+    // arrêt net avant le scroll normal.
+    if (sign > 0) return;
+
     window.lenis?.stop();
-    if (sign > 0) {
-      snapToBento();
-    } else {
-      snapToLastStep();
-    }
+    snapToLastStep();
   }
 
   function onWheel(e) {
