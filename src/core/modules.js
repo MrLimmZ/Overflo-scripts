@@ -21,7 +21,7 @@ import { initNav } from "../components/nav.js";
 import { initNavTheme } from "../components/nav-theme.js";
 import { initCtaParallax } from "../animations/cta-parallax.js";
 import { initHeroParallax } from "../animations/hero-parallax.js";
-import { initFocusParallax, initShowcaseParallax } from "../animations/banner-parallax.js";
+import { initFocusParallax } from "../animations/banner-parallax.js";
 import { initButtonHover } from "../components/button-hover.js";
 import { initBlogFilter } from "../content/blog-filter.js";
 import { initCustomSelects } from "../components/custom-select.js";
@@ -64,7 +64,6 @@ export const PAGE_MODULES = [
   initCtaParallax,
   initHeroParallax,
   initFocusParallax,
-  initShowcaseParallax,
   initButtonHover,
   initBlogFilter,
   initCustomSelects,

@@ -1,7 +1,7 @@
 // src/animations/banner-parallax.js
 //
 // Parallaxe verticale d'une bannière pendant que sa section traverse l'écran
-// (sections .focus et .showcase). Désactivée sur mobile et en reduced motion.
+// (section .focus). Désactivée sur mobile et en reduced motion.
 // data-speed sur la bannière règle l'amplitude (1 par défaut).
 
 import { prefersReducedMotion, onMotionPreferenceChange } from "../utils/motion.js";
@@ -70,13 +70,5 @@ export function initFocusParallax(root = document) {
     sectionSelector: ".focus",
     bannerSelector: ".focus-content--banner",
     initFlag: "focusParallaxInit",
-  });
-}
-
-export function initShowcaseParallax(root = document) {
-  initBannerParallax(root, {
-    sectionSelector: ".showcase",
-    bannerSelector: ".showcase-banner--image",
-    initFlag: "showcaseParallaxInit",
   });
 }
