@@ -9,7 +9,7 @@
     "dev:proxy": "node scripts/dev-proxy.js",
     "dev:tunnel": "cloudflared tunnel run webflow-dev",
     "dev": "concurrently -n esbuild,proxy,tunnel -c blue,green,magenta \"npm:dev:esbuild\" \"npm:dev:proxy\" \"npm:dev:tunnel\"",
-    "deploy": "node scripts/build.js && git add . && git commit -m 'update' && git push && node scripts/purge.js"
+    "deploy": "node scripts/deploy.js"
   },
   "repository": {
     "type": "git",
