@@ -5,8 +5,11 @@
 // clip-path de la bannière, vidéos des bannières pilotées ici). La première
 // étape est virtuelle (vide) pour que le header de la home
 // (sections/home-header.js) passe la main à la première vraie étape.
-// Tablette/mobile : étapes dans le flux normal, chaque bannière se dévoile
-// une fois quand elle devient visible.
+// Tablette/mobile : même section épinglée (retours client 059-061) : le titre
+// reste en haut, l'écran est centré dessous et change à chaque geste, le texte
+// de l'étape glisse en bas (mise en page : styles/_explain.scss, classe
+// .is-pinned-mobile). PIN_ON_MOBILE = false revient à l'ancien mode (étapes
+// dans le flux, chaque bannière se dévoile quand elle devient visible).
 
 import { hasScrollTrigger, BREAKPOINTS, maxWidthQuery } from "../utils/env.js";
 import { setPinStackOrder } from "../utils/dom.js";
@@ -31,11 +34,26 @@ const MOBILE_REVEAL_THRESHOLD = 0.15;
 
 const REENTRY_INSET = 4;
 
+const PIN_ON_MOBILE = true;
+// Espace entre le titre mobile (fixe) et le haut des étapes.
+const MOBILE_HEAD_GAP = 24;
+
+// Sur écran tactile, le scroll est natif (pas de Lenis sur téléphone) : on
+// le gèle pendant les transitions, sinon l'inertie du doigt continue de
+// faire défiler la page.
+const touchMq = window.matchMedia("(hover: none) and (pointer: coarse)");
+function freezeNativeScroll(on) {
+  if (!touchMq.matches && on) return;
+  document.documentElement.classList.toggle("is-scroll-frozen", on);
+}
+
 function lenisStop() {
   acquireScrollLock(OWNER_ID);
   window.lenis?.stop();
+  freezeNativeScroll(true);
 }
 function lenisStart() {
+  freezeNativeScroll(false);
   window.lenis?.start();
   releaseScrollLock(OWNER_ID);
 }
@@ -139,6 +157,34 @@ export function initExplainSteps(root = document) {
   if (total < 2) return;
 
   const mobileMq = maxWidthQuery(BREAKPOINTS.tablet);
+  const isStaticMode = () => mobileMq.matches && !PIN_ON_MOBILE;
+  const mobileHead = contentWrapper.querySelector(":scope > .heading-4.mobile");
+
+  // Mobile épinglé : le titre fixe n'apparaît qu'avec le premier écran
+  // (sinon il se superpose au header pendant la transition).
+  function setMobileHeadVisible(visible, immediate = false) {
+    if (!mobileHead) return;
+    gsap.killTweensOf(mobileHead);
+    if (!(mobileMq.matches && PIN_ON_MOBILE)) {
+      gsap.set(mobileHead, { clearProps: "opacity,y" });
+      return;
+    }
+    const to = { opacity: visible ? 1 : 0, y: visible ? 0 : 16 };
+    if (immediate) gsap.set(mobileHead, to);
+    else gsap.to(mobileHead, { ...to, duration: MASK_DURATION, ease: MASK_EASE });
+  }
+
+  // Mobile épinglé : les étapes (en absolu) commencent sous le titre fixe.
+  function syncMobileLayout() {
+    const pinnedMobile = mobileMq.matches && PIN_ON_MOBILE;
+    section.classList.toggle("is-pinned-mobile", pinnedMobile);
+    if (!pinnedMobile) {
+      section.style.removeProperty("--explain-step-top");
+      return;
+    }
+    const top = mobileHead ? mobileHead.offsetTop + mobileHead.offsetHeight + MOBILE_HEAD_GAP : 0;
+    section.style.setProperty("--explain-step-top", `${Math.round(top)}px`);
+  }
 
   const steps = [
     { step: virtualStepEl, banner: null },
@@ -312,6 +358,7 @@ export function initExplainSteps(root = document) {
     setStepStacking(activeIndex, -1);
     setBannerStable(activeIndex);
     currentActiveIndex = activeIndex;
+    setMobileHeadVisible(activeIndex !== 0, true);
   }
 
   function repositionStepsForViewport() {
@@ -358,7 +405,8 @@ export function initExplainSteps(root = document) {
 
   function syncOnRefresh() {
     if (cleanupIfDetached()) return;
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
+    syncMobileLayout();
     if (!trigger) return;
 
     bandStep = window.innerHeight * 0.8;
@@ -374,6 +422,9 @@ export function initExplainSteps(root = document) {
 
   function canStepDirectly(dir) {
     if (performance.now() - pinReenteredAt < REENTRY_COOLDOWN_MS) return false;
+    // Mobile : on peut arriver sur l'étape vide par le scroll normal (header
+    // plus haut que l'écran) : le premier geste affiche le premier écran.
+    if (dir > 0 && currentActiveIndex === 0 && mobileMq.matches) return true;
     if (dir > 0) return currentActiveIndex >= 1 && currentActiveIndex < total - 1;
     return currentActiveIndex > 1;
   }
@@ -393,7 +444,7 @@ export function initExplainSteps(root = document) {
   let lastBoundarySign = null;
 
   function onNativeScroll() {
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (locked) {
       lastBoundarySign = null;
       return;
@@ -425,7 +476,7 @@ export function initExplainSteps(root = document) {
   }
 
   function onWheel(e) {
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (cleanupIfDetached()) return;
 
     if (locked) {
@@ -452,12 +503,12 @@ export function initExplainSteps(root = document) {
   }
   let touchStartY = 0;
   function onTouchStart(e) {
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (cleanupIfDetached()) return;
     touchStartY = e.touches[0]?.clientY ?? 0;
   }
   function onTouchMove(e) {
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (cleanupIfDetached()) return;
 
     if (locked) {
@@ -485,7 +536,7 @@ export function initExplainSteps(root = document) {
   }
   function onKeyDown(e) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (cleanupIfDetached()) return;
 
     if (locked) {
@@ -524,6 +575,7 @@ export function initExplainSteps(root = document) {
   function stepToward(nextIndex) {
     const outgoingIndex = currentActiveIndex;
     const isReturnToVirtual = outgoingIndex === 1 && nextIndex === 0;
+    if (outgoingIndex === 0 || nextIndex === 0) setMobileHeadVisible(nextIndex !== 0);
 
     locked = true;
     queuedDelta = 0;
@@ -697,6 +749,11 @@ export function initExplainSteps(root = document) {
 
   function setupDesktop() {
     teardownMobileReveal();
+    if (trigger) {
+      trigger.kill();
+      trigger = null;
+    }
+    syncMobileLayout();
 
     if (hasSetupOnce) {
       // Ne recale le scroll vers .explain que si on était déjà dedans (ou
@@ -734,6 +791,11 @@ export function initExplainSteps(root = document) {
       onEnter: () => {
         setPinStackOrder(section, 1);
         pinReenteredAt = performance.now();
+        // Mobile, arrivée par le scroll normal : premier écran tout de suite
+        // (sur desktop, c'est le header qui déclenche cette entrée).
+        if (mobileMq.matches && !activeTween && currentActiveIndex === 0) {
+          stepToward(1);
+        }
       },
       onEnterBack: () => {
         setPinStackOrder(section, 1);
@@ -772,6 +834,7 @@ export function initExplainSteps(root = document) {
     releaseScrollLock(OWNER_ID);
 
     gsap.set([virtualStepEl, ...stepEls], { clearProps: "position,inset,zIndex,y" });
+    if (mobileHead) gsap.set(mobileHead, { clearProps: "opacity,y" });
     virtualStepEl.style.display = "none";
 
     steps.forEach(({ step, banner }) => {
@@ -810,7 +873,8 @@ export function initExplainSteps(root = document) {
   }
 
   function setup() {
-    if (mobileMq.matches) {
+    if (isStaticMode()) {
+      syncMobileLayout();
       applyMobileStatic();
     } else {
       setupDesktop();

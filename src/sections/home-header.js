@@ -1,7 +1,9 @@
 // src/sections/home-header.js
 //
-// Header de la home (au-delà de 992px) : le premier geste de scroll "snappe"
-// vers la section explain au lieu de scroller librement. Le contenu du header
+// Header de la home : le premier geste de scroll (molette ou doigt) "snappe"
+// vers la section explain au lieu de scroller librement, sur desktop comme
+// sur mobile (retour client 059 ; PIN_ON_MOBILE = false pour revenir à un
+// header classique sous 992px). Le contenu du header
 // disparaît en fondu pendant que sa forme de fond grandit jusqu'à la bannière
 // de la première étape (pilotée par sections/explain-steps.js via
 // utils/shape-follow.js). Remonter depuis la première étape fait l'inverse.
@@ -32,6 +34,8 @@ const CONTENT_TRANSLATE_Y = 20;
 // de leur boîte (16 px). La forme de fond vise cet arrondi réel, pour que ses
 // coins ne dépassent pas de ceux du téléphone à la fin de la transition.
 const SCREEN_CORNER_RATIO = 56 / 572;
+
+const PIN_ON_MOBILE = true;
 
 function createHomeHeaderPin(section) {
   const trigger = ScrollTrigger.create({
@@ -64,6 +68,7 @@ export function initHomeHeaderSnap(root = document) {
   section.dataset.snapInit = "1";
 
   const mobileMq = maxWidthQuery(BREAKPOINTS.tablet);
+  const isStaticMode = () => mobileMq.matches && !PIN_ON_MOBILE;
 
   const next = section.nextElementSibling;
 
@@ -131,7 +136,7 @@ export function initHomeHeaderSnap(root = document) {
     });
   }
 
-  if (!mobileMq.matches) {
+  if (!isStaticMode()) {
     applyDesktopShapeBase();
   }
 
@@ -175,7 +180,7 @@ export function initHomeHeaderSnap(root = document) {
     if (!shapeEl) return;
     initialShapeSize = computeInitialShapeSize();
     initialShapeBorderRadius = getComputedStyle(shapeEl).borderRadius || "0px";
-    const willApply = !mobileMq.matches && activeSide === "home" && !locked;
+    const willApply = !isStaticMode() && activeSide === "home" && !locked;
     if (willApply) {
       gsap.set(shapeEl, {
         width: initialShapeSize.width,
@@ -406,7 +411,7 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   function onWheel(e) {
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (cleanupIfDetached()) return;
     if (prefersReducedMotion()) return;
 
@@ -436,13 +441,13 @@ export function initHomeHeaderSnap(root = document) {
   let touchStartY = 0;
 
   function onTouchStart(e) {
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (cleanupIfDetached()) return;
     touchStartY = e.touches[0]?.clientY ?? 0;
   }
 
   function onTouchMove(e) {
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (cleanupIfDetached()) return;
     if (prefersReducedMotion()) return;
 
@@ -474,7 +479,7 @@ export function initHomeHeaderSnap(root = document) {
 
   function onKeyDown(e) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    if (mobileMq.matches) return;
+    if (isStaticMode()) return;
     if (cleanupIfDetached()) return;
     if (prefersReducedMotion()) return;
 
@@ -533,6 +538,9 @@ export function initHomeHeaderSnap(root = document) {
   }
 
   function setPinMode(isMobile) {
+    // Mobile épinglé : le dégradé passe du fond d'explain à celui du header,
+    // sous la forme qui se resserre (styles/_explain.scss), comme en desktop.
+    section.classList.toggle("is-pinned-mobile", mobileMq.matches && PIN_ON_MOBILE);
     if (isMobile) {
       if (pinTrigger) {
         pinTrigger.kill();
@@ -576,7 +584,7 @@ export function initHomeHeaderSnap(root = document) {
     );
   }
 
-  setPinMode(mobileMq.matches);
+  setPinMode(isStaticMode());
 
   if (activeSide === "home") {
     playLoadEntrance();
@@ -586,7 +594,7 @@ export function initHomeHeaderSnap(root = document) {
     "change",
     () => {
       if (cleanupIfDetached()) return;
-      setPinMode(mobileMq.matches);
+      setPinMode(isStaticMode());
       ScrollTrigger.refresh();
     },
     { signal },

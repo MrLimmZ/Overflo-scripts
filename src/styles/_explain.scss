@@ -75,3 +75,89 @@
     display: block;
   }
 }
+/* Mobile/tablette épinglé (sections/explain-steps.js, retours 059-061) :
+   titre fixe en haut, écran centré dessous qui change à chaque geste, texte
+   de l'étape en bas. Les étapes sont posées en absolu par le JS ; elles
+   commencent sous le titre (--explain-step-top, calculé en JS). */
+@media screen and (max-width: 991px) {
+  .explain.is-pinned-mobile {
+    height: 100svh;
+
+    .explain--content {
+      position: relative;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .explain-step {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: var(--_spacing---space-5);
+      padding: var(--explain-step-top, 0px) var(--_spacing---space-page) var(--_spacing---space-5);
+      box-sizing: border-box;
+    }
+
+    .explain-step--center {
+      position: relative;
+      order: -1;
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+    }
+
+    .explain-step-banner {
+      height: 100%;
+      width: auto;
+      max-width: 100%;
+    }
+
+    .explain-step-banner--img,
+    .explain-step-banner video {
+      display: block;
+      height: 100%;
+      width: auto;
+      max-width: 100%;
+      object-fit: contain;
+    }
+
+    .explain-step--text {
+      flex: none;
+    }
+  }
+}
+
+/* Transition header -> explain en mobile épinglé (comme en desktop) : le
+   dégradé est porté par le header, sous sa forme beige qui se resserre
+   jusqu'au premier écran ; explain est transparent par-dessus. Au repos, le
+   rendu ne change pas (la forme recouvre le dégradé du header). */
+@media screen and (max-width: 991px) {
+  /* Le header reste épinglé derrière explain : il doit couvrir tout l'écran
+     (sur tablette, son contenu est moins haut que l'écran). */
+  .home-header.is-pinned-mobile {
+    min-height: 100svh;
+  }
+
+  .home-header.is-pinned-mobile .home-header--content {
+    background-image: linear-gradient(
+      90deg,
+      var(--_tokens---beige--150),
+      var(--_colors---text--background-accent)
+    );
+  }
+
+  .explain.is-pinned-mobile,
+  .explain.is-pinned-mobile .explain--content {
+    background: none;
+  }
+}
+
+/* Gel du scroll natif pendant une transition (écrans tactiles). */
+html.is-scroll-frozen,
+html.is-scroll-frozen body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
