@@ -22,6 +22,14 @@
     max-width: none;
   }
 
+  /* L'écran n'occupe plus toute la hauteur : on le centre verticalement. */
+  .explain .explain-step--center {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+
   .explain .explain-step-banner {
     flex: none;
     align-self: center;
